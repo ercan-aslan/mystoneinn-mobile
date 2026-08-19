@@ -95,14 +95,10 @@ export default function LoginScreen({ onLoginSuccess }) {
       return;
     }
 
-    const u = email.trim().toLowerCase();
+    const u = email.trim();
     const p = password.trim();
     if (!u || !p) {
-      setError('Lütfen e-posta ve şifrenizi girin.');
-      return;
-    }
-    if (!u.includes('@')) {
-      setError('Giriş e-posta ile yapılır.');
+      setError('Lütfen kullanıcı adı veya e-posta ve şifrenizi girin.');
       return;
     }
 
@@ -120,7 +116,7 @@ export default function LoginScreen({ onLoginSuccess }) {
       await applyAuthResult(result);
     } catch (err) {
       if (err.status === 401) {
-        setError('E-posta veya şifre hatalı. Web paneldeki e-posta ile girin.');
+        setError('Kullanıcı adı, e-posta veya şifre hatalı.');
       } else if (err.status === 429) {
         setError('Çok fazla deneme. 15 dakika sonra tekrar deneyin.');
       } else if (err.status === 503) {
@@ -225,17 +221,17 @@ export default function LoginScreen({ onLoginSuccess }) {
               </View>
             ) : null}
 
-            <Text style={styles.label}>E-posta</Text>
+            <Text style={styles.label}>Kullanıcı adı veya e-posta</Text>
             <View style={styles.inputGroup}>
-              <Text style={styles.inputIcon}>✉️</Text>
+              <Text style={styles.inputIcon}>👤</Text>
               <TextInput
                 style={styles.input}
-                placeholder="ornek@otel.com"
+                placeholder="ercanaslan veya e-posta"
                 placeholderTextColor={COLORS.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
-                keyboardType="email-address"
-                textContentType="emailAddress"
+                keyboardType="default"
+                textContentType="username"
                 value={email}
                 onChangeText={(t) => {
                   setEmail(t);
