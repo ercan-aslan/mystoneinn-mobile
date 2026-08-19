@@ -13,6 +13,7 @@ import {
 import { AuthAPI, STORAGE_ADMIN_KEY, STORAGE_API_BUILD_KEY, STORAGE_TOKEN_KEY, bootstrapSecureAuthStorage, checkMobileApiConnection, saveSiteBranding } from '../api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { storageSetItem } from '../utils/secureStorage';
+import { startAppleLogin, startGoogleLogin } from '../socialAuth';
 import AppPressable from '../components/AppPressable';
 import {
   getBiometricLabel,
@@ -132,6 +133,48 @@ export default function LoginScreen({ onLoginSuccess }) {
     }
   };
 
+  const handleGoogle = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const ticket = await startGoogleLogin();
+      if (!ticket) {
+        return;
+      }
+      const result = await AuthAPI.social({ ticket });
+      await applyAuthResult(result);
+    } catch (err) {
+      setError(err.message || 'Google ile giriş başarısız.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApple = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const cred = await startAppleLogin();
+      if (!cred) {
+        return;
+      }
+      if (cred.error) {
+        setError(cred.error);
+        return;
+      }
+      const result = await AuthAPI.social({
+        identityToken: cred.identityToken,
+        email: cred.email,
+        fullName: cred.fullName,
+      });
+      await applyAuthResult(result);
+    } catch (err) {
+      setError(err.message || 'Apple ile giriş başarısız.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <View style={styles.root}>
       <KeyboardAvoidingView
@@ -146,7 +189,7 @@ export default function LoginScreen({ onLoginSuccess }) {
           <View style={styles.loginCard}>
             <View style={styles.cardTopBorder} />
             <Image
-              source={require('../../assets/icon.png')}
+              source={require('../../assets/logo.png')}
               style={styles.loginLogo}
               resizeMode="contain"
               accessibilityLabel="MyStoneINN"
@@ -243,6 +286,19 @@ export default function LoginScreen({ onLoginSuccess }) {
                   onPress={() => handleLogin()}
                   style={styles.button}
                 />
+                <View style={styles.orRow}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>veya</Text>
+                  <View style={styles.orLine} />
+                </View>
+                {Platform.OS === 'ios' ? (
+                  <Pressable style={styles.appleBtn} onPress={handleApple} disabled={loading}>
+                    <Text style={styles.appleBtnText}>Apple ile giriş</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable style={styles.googleBtn} onPress={handleGoogle} disabled={loading}>
+                  <Text style={styles.googleBtnText}>Google ile giriş</Text>
+                </Pressable>
               </>
             ) : null}
           </View>
