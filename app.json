@@ -16,6 +16,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.mystoneinn.admin",
       "buildNumber": "8",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSFaceIDUsageDescription": "Uygulamaya Face ID ile giriş yapmak için kullanılır.",
