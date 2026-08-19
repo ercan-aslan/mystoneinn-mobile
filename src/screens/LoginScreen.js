@@ -1,0 +1,335 @@
+import React, { useEffect, useState } from 'react';
+import {
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { AuthAPI, STORAGE_ADMIN_KEY, STORAGE_API_BUILD_KEY, STORAGE_TOKEN_KEY, bootstrapSecureAuthStorage, checkMobileApiConnection, saveSiteBranding } from '../api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { normalizeAdminUsername } from '../config';
+import { storageSetItem } from '../utils/secureStorage';
+import AppPressable from '../components/AppPressable';
+import {
+  getBiometricLabel,
+  isBiometricSupported,
+  setBiometricEnabled,
+} from '../services/biometricAuth';
+import Constants from 'expo-constants';
+import { COLORS, BRAND_NAME } from '../theme';
+
+export default function LoginScreen({ onLoginSuccess }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [apiStatus, setApiStatus] = useState(null);
+  const [branding, setBranding] = useState(null);
+  const [bioSupported, setBioSupported] = useState(false);
+  const [bioLabel, setBioLabel] = useState('Biyometrik');
+  const [enableBio, setEnableBio] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      await bootstrapSecureAuthStorage();
+      const supported = await isBiometricSupported();
+      setBioSupported(supported);
+      if (supported) {
+        setBioLabel(await getBiometricLabel());
+      }
+
+      const status = await checkMobileApiConnection();
+      setApiStatus(status);
+      if (status.branding) {
+        setBranding(status.branding);
+        await saveSiteBranding(status.branding);
+      }
+    })();
+  }, []);
+
+  const handleLogin = async () => {
+    const u = normalizeAdminUsername(username);
+    const p = password.trim();
+    if (!u || !p) {
+      setError('Lütfen tüm alanları doldurun.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const status = apiStatus?.ok ? apiStatus : await checkMobileApiConnection();
+      setApiStatus(status);
+      if (!status.ok) {
+        setError(status.message || 'Sunucuya bağlanılamadı.');
+        return;
+      }
+
+      const result = await AuthAPI.login(u, p);
+      await storageSetItem(STORAGE_TOKEN_KEY, result.token);
+      await AsyncStorage.setItem(STORAGE_ADMIN_KEY, JSON.stringify(result.admin || {}));
+      await AsyncStorage.setItem(STORAGE_API_BUILD_KEY, String(result.api_build || 'eski'));
+      if (bioSupported && enableBio) {
+        await setBiometricEnabled(true);
+      }
+      if (result.branding) {
+        setBranding(result.branding);
+        await saveSiteBranding(result.branding);
+      }
+      onLoginSuccess(result);
+    } catch (err) {
+      if (err.status === 401) {
+        setError('Kullanıcı adı veya şifre hatalı. Web admin ile aynı bilgileri girin (@ işareti olmadan).');
+      } else if (err.status === 429) {
+        setError('Çok fazla deneme. 15 dakika sonra tekrar deneyin.');
+      } else if (err.status === 503) {
+        setError('Mobil API yapılandırması eksik. Sunucuda api/mobile/secret.php oluşturun.');
+      } else {
+        setError(err.message || 'Giriş başarısız.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <View style={styles.root}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <View style={styles.loginCard}>
+            <View style={styles.cardTopBorder} />
+            {branding?.logo_url ? (
+              <Image
+                source={{ uri: branding.logo_url }}
+                style={styles.loginLogo}
+                resizeMode="contain"
+                accessibilityLabel={branding.site_name || 'Otel logosu'}
+              />
+            ) : (
+              <Text style={styles.icon}>🛡️</Text>
+            )}
+            <Text style={styles.title}>Personel Girişi</Text>
+            <Text style={styles.subtitle}>
+              {branding?.site_name ? `${branding.site_name} Yönetim Paneli` : 'Otel Yönetim Sistemi'}
+            </Text>
+
+            {apiStatus && !apiStatus.ok ? (
+              <View style={styles.warnBox}>
+                <Text style={styles.warnText}>⚠️ {apiStatus.message}</Text>
+              </View>
+            ) : null}
+
+            {apiStatus?.ok ? (
+              <Text style={styles.apiOkText}>API bağlantısı hazır</Text>
+            ) : null}
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>⚠️ {error}</Text>
+              </View>
+            ) : null}
+
+            <Text style={styles.label}>Kullanıcı Adı</Text>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputIcon}>👤</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="kullanici_adi"
+                placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="none"
+                value={username}
+                onChangeText={setUsername}
+                editable={!loading}
+              />
+            </View>
+
+            <Text style={styles.label}>Şifre</Text>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputIcon}>🔑</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="••••••••"
+                placeholderTextColor={COLORS.textMuted}
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+                editable={!loading}
+                onSubmitEditing={handleLogin}
+              />
+            </View>
+
+            {bioSupported ? (
+              <Pressable
+                style={styles.bioRow}
+                onPress={() => setEnableBio((v) => !v)}
+                disabled={loading}
+              >
+                <View style={[styles.bioCheck, enableBio && styles.bioCheckOn]}>
+                  {enableBio ? <Text style={styles.bioCheckMark}>✓</Text> : null}
+                </View>
+                <Text style={styles.bioText}>
+                  Sonraki açılışlarda {bioLabel.toLowerCase()} ile aç
+                </Text>
+              </Pressable>
+            ) : null}
+
+            <AppPressable
+              title={loading ? '' : 'Giriş Yap →'}
+              color={COLORS.primary}
+              loading={loading}
+              disabled={loading}
+              onPress={handleLogin}
+              style={styles.button}
+            />
+          </View>
+          <Text style={styles.footer}>© {BRAND_NAME} · APK v{Constants.expoConfig?.version || '1.0.10'}</Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: COLORS.primaryDark,
+  },
+  flex: { flex: 1 },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loginCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    elevation: 10,
+    overflow: 'hidden',
+  },
+  cardTopBorder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 5,
+    backgroundColor: COLORS.accent,
+  },
+  icon: { fontSize: 40, textAlign: 'center', marginBottom: 8 },
+  loginLogo: {
+    width: '100%',
+    height: 56,
+    marginBottom: 12,
+    alignSelf: 'center',
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: 20,
+    marginTop: 4,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+    marginBottom: 6,
+  },
+  inputGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  inputIcon: { paddingLeft: 12, fontSize: 16 },
+  input: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    fontSize: 16,
+    minHeight: 48,
+    color: COLORS.textPrimary,
+  },
+  button: {
+    marginTop: 8,
+    minHeight: 48,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  bioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 6,
+  },
+  bioCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bioCheckOn: {
+    backgroundColor: COLORS.primary,
+  },
+  bioCheckMark: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  bioText: { flex: 1, fontSize: 13, color: COLORS.textSecondary, fontWeight: '600' },
+  errorBox: {
+    backgroundColor: '#f8d7da',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  warnBox: {
+    backgroundColor: '#fff3cd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  warnText: { color: '#856404', fontWeight: '700', fontSize: 13 },
+  apiOkText: {
+    textAlign: 'center',
+    color: COLORS.success,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  errorText: { color: COLORS.danger, fontWeight: '700', fontSize: 14 },
+  footer: {
+    textAlign: 'center',
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 24,
+    fontSize: 12,
+  },
+});
