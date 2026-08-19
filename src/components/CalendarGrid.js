@@ -5,9 +5,13 @@ import { COLORS } from '../theme';
 import { getCalendarReservationColor } from '../utils/format';
 
 export const CELL_W = 52;
-export const ROOM_W = 96;
+export const ROOM_W = 108;
 export const ROW_H = 40;
 export const DETAIL_ROW_H = 28;
+
+export function calendarRowKey(room) {
+  return String(room?.row_key || room?.room_id || '');
+}
 
 const DETAIL_ROWS = [
   { key: 'status', label: 'Durum' },
@@ -17,8 +21,8 @@ const DETAIL_ROWS = [
   { key: 'max', label: 'Max gece' },
 ];
 
-function getSelectionRole(roomId, date, selection) {
-  if (!selection?.checkIn || String(selection.roomId) !== String(roomId)) {
+function getSelectionRole(rowKey, date, selection) {
+  if (!selection?.checkIn || String(selection.rowKey || selection.roomId) !== String(rowKey)) {
     return null;
   }
 
@@ -50,11 +54,12 @@ function DayCell({
   width,
   onCellPress,
   onReservationPress,
-  roomId,
+  room,
+  rowKey,
   selection,
   rowSelected,
 }) {
-  const role = getSelectionRole(roomId, day.date, selection);
+  const role = getSelectionRole(rowKey, day.date, selection);
   const isOpen = cell?.type === 'open';
   const isPast = day.is_past;
   const resColor =
@@ -114,11 +119,13 @@ function DayCell({
     );
   }
 
-  if (isOpen && !isPast && onCellPress) {
+  const selectable = cell?.type === 'open' && !isPast;
+
+  if (selectable && onCellPress) {
     return (
       <Pressable
         accessibilityRole="button"
-        onPress={() => onCellPress(roomId, day.date, cell)}
+        onPress={() => onCellPress(room, day.date, cell)}
         style={({ pressed }) => [styles.cellPress, { width }, pressed && styles.cellPressed]}
       >
         {content}
@@ -126,30 +133,32 @@ function DayCell({
     );
   }
 
-  return <View>{content}</View>;
+  return <View style={[styles.cellDisabled, { width }]}>{content}</View>;
 }
 
 function buildRowCells(days, room, grid, onCellPress, onReservationPress, selection) {
-  const roomId = room.room_id;
-  const rid = String(roomId);
-  const rowSelected = selection?.roomId && String(selection.roomId) === rid;
+  const rowKey = calendarRowKey(room);
+  const rowSelected = selection?.rowKey
+    ? String(selection.rowKey) === rowKey
+    : selection?.roomId && String(selection.roomId) === String(room.room_id);
   const cells = [];
   let d = 0;
 
   while (d < days.length) {
     const day = days[d];
-    const cell = grid[rid]?.[day.date] || grid[roomId]?.[day.date];
+    const cell = grid[rowKey]?.[day.date] || grid[room.room_id]?.[day.date];
     const colspan = cell?.colspan || 1;
     const isSpan = cell?.type === 'reservation' || cell?.type === 'block';
     const width = isSpan ? CELL_W * colspan : CELL_W;
 
     cells.push(
       <DayCell
-        key={`${rid}-${day.date}`}
+        key={`${rowKey}-${day.date}`}
         cell={cell}
         day={day}
         width={width}
-        roomId={roomId}
+        room={room}
+        rowKey={rowKey}
         onCellPress={onCellPress}
         onReservationPress={onReservationPress}
         selection={selection}
@@ -165,6 +174,7 @@ function buildRowCells(days, room, grid, onCellPress, onReservationPress, select
 
 function resolveDayState(dayState, room, day, grid) {
   const roomId = room.room_id;
+  const rowKey = calendarRowKey(room);
   const rid = String(roomId);
   const fromMap =
     dayState?.[rid]?.[day.date]
@@ -174,8 +184,7 @@ function resolveDayState(dayState, room, day, grid) {
     return fromMap;
   }
 
-  // Fallback: grid hücresinden türet (API day_state yoksa)
-  const cell = grid?.[rid]?.[day.date] || grid?.[roomId]?.[day.date];
+  const cell = grid?.[rowKey]?.[day.date] || grid?.[rid]?.[day.date] || grid?.[roomId]?.[day.date];
   if (!cell || cell.type === 'reservation' || cell.type === 'block') {
     return {
       is_open: false,
@@ -225,25 +234,30 @@ function DetailValue({ rowKey, room, state }) {
   return <Text style={styles.detailMuted}>—</Text>;
 }
 
-function RoomLabel({ room, expanded, active, onToggle }) {
+function RoomLabel({ room, expanded, active, onToggle, showChevron }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ expanded }}
-      onPress={onToggle}
+      onPress={showChevron ? onToggle : undefined}
+      disabled={!showChevron}
       style={({ pressed }) => [
         styles.roomCol,
         active && styles.roomColActive,
         expanded && styles.roomColExpanded,
-        pressed && styles.cellPressed,
+        pressed && showChevron && styles.cellPressed,
       ]}
     >
-      <Ionicons
-        name={expanded ? 'chevron-down' : 'chevron-forward'}
-        size={14}
-        color={COLORS.textSecondary}
-        style={styles.chevron}
-      />
+      {showChevron ? (
+        <Ionicons
+          name={expanded ? 'chevron-down' : 'chevron-forward'}
+          size={14}
+          color={COLORS.textSecondary}
+          style={styles.chevron}
+        />
+      ) : (
+        <View style={styles.chevronSpacer} />
+      )}
       <Text style={[styles.roomName, active && styles.roomNameActive]} numberOfLines={2}>
         {room.room_name}
       </Text>
@@ -263,8 +277,8 @@ export default function CalendarGrid({
   const [expanded, setExpanded] = useState(() => new Set());
   const totalWidth = Math.max(days.length * CELL_W, CELL_W);
 
-  const toggleRoom = (roomId) => {
-    const key = String(roomId);
+  const toggleRoomType = (room) => {
+    const key = String(room.room_id);
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -276,26 +290,31 @@ export default function CalendarGrid({
   return (
     <View style={styles.wrapper}>
       <Text style={styles.hint}>
-        Oda adının yanındaki oka basarak durum, fiyat, müsaitlik ve diğer detayları görün.
+        Yalnızca müsait (açık) günlere basarak rezervasyon ekleyin. Oda adının yanındaki ok durum, fiyat ve min/max gösterir.
       </Text>
       <View style={styles.table}>
         <View style={styles.fixedCol}>
           <View style={[styles.roomCol, styles.roomColHead]}>
             <Text style={styles.roomHead}>Odalar</Text>
           </View>
-          {rooms.map((room) => {
-            const rid = String(room.room_id);
-            const isExpanded = expanded.has(rid);
-            const active = selection?.roomId && String(selection.roomId) === rid;
+          {rooms.map((room, index) => {
+            const rid = calendarRowKey(room);
+            const firstOfType = index === 0 || Number(rooms[index - 1].room_id) !== Number(room.room_id);
+            const lastOfType = index === rooms.length - 1 || Number(rooms[index + 1].room_id) !== Number(room.room_id);
+            const isExpanded = expanded.has(String(room.room_id));
+            const active = selection?.rowKey
+              ? String(selection.rowKey) === rid
+              : selection?.roomId && String(selection.roomId) === String(room.room_id);
             return (
               <View key={`label-${rid}`}>
                 <RoomLabel
                   room={room}
                   expanded={isExpanded}
                   active={active}
-                  onToggle={() => toggleRoom(room.room_id)}
+                  showChevron={firstOfType}
+                  onToggle={() => toggleRoomType(room)}
                 />
-                {isExpanded
+                {isExpanded && lastOfType
                   ? DETAIL_ROWS.map((row) => (
                       <View key={`${rid}-${row.key}`} style={styles.detailLabelCol}>
                         <Text style={styles.detailLabel} numberOfLines={1}>
@@ -323,15 +342,16 @@ export default function CalendarGrid({
                 <DayHeader key={day.date} day={day} />
               ))}
             </View>
-            {rooms.map((room) => {
-              const rid = String(room.room_id);
-              const isExpanded = expanded.has(rid);
+            {rooms.map((room, index) => {
+              const rid = calendarRowKey(room);
+              const lastOfType = index === rooms.length - 1 || Number(rooms[index + 1].room_id) !== Number(room.room_id);
+              const isExpanded = expanded.has(String(room.room_id));
               return (
                 <View key={`row-${rid}`}>
                   <View style={styles.dateRow}>
                     {buildRowCells(days, room, grid, onCellPress, onReservationPress, selection)}
                   </View>
-                  {isExpanded
+                  {isExpanded && lastOfType
                     ? DETAIL_ROWS.map((row) => (
                         <View key={`${rid}-d-${row.key}`} style={styles.detailDateRow}>
                           {days.map((day) => {
@@ -417,6 +437,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   chevron: { marginRight: 2, width: 14 },
+  chevronSpacer: { width: 16 },
   roomHead: { fontSize: 11, fontWeight: '700', color: COLORS.textSecondary },
   roomName: { flex: 1, fontSize: 11, fontWeight: '700', color: COLORS.textPrimary },
   roomNameActive: { color: COLORS.primary },
@@ -525,6 +546,7 @@ const styles = StyleSheet.create({
   blockText: { color: '#6c757d', fontSize: 10, fontWeight: '600', fontStyle: 'italic' },
   priceTextOpen: { fontSize: 9, color: COLORS.textPrimary, textAlign: 'center', fontWeight: '600' },
   closedText: { fontSize: 9, color: '#ccc', fontStyle: 'italic', textAlign: 'center' },
+  cellDisabled: { opacity: 0.72 },
   cellPress: {
     backgroundColor: 'transparent',
     padding: 0,

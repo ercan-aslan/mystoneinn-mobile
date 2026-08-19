@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 
 const SECURE_KEYS = new Set([
   '@mystoneinn_admin_token',
+  '@mystoneinn_admin_token',
 ]);
 
 function canUseSecureStore() {

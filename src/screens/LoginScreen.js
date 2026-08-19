@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { AuthAPI, STORAGE_ADMIN_KEY, STORAGE_API_BUILD_KEY, STORAGE_TOKEN_KEY, bootstrapSecureAuthStorage, checkMobileApiConnection, saveSiteBranding } from '../api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { normalizeAdminUsername } from '../config';
 import { storageSetItem } from '../utils/secureStorage';
 import AppPressable from '../components/AppPressable';
 import {
@@ -24,7 +23,7 @@ import Constants from 'expo-constants';
 import { COLORS, BRAND_NAME } from '../theme';
 
 export default function LoginScreen({ onLoginSuccess }) {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -33,6 +32,8 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [bioSupported, setBioSupported] = useState(false);
   const [bioLabel, setBioLabel] = useState('Biyometrik');
   const [enableBio, setEnableBio] = useState(true);
+  const [hotelChoices, setHotelChoices] = useState(null);
+  const [socialTicket, setSocialTicket] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -52,11 +53,55 @@ export default function LoginScreen({ onLoginSuccess }) {
     })();
   }, []);
 
-  const handleLogin = async () => {
-    const u = normalizeAdminUsername(username);
+  const finishLogin = async (result) => {
+    await storageSetItem(STORAGE_TOKEN_KEY, result.token);
+    await AsyncStorage.setItem(STORAGE_ADMIN_KEY, JSON.stringify(result.admin || {}));
+    await AsyncStorage.setItem(STORAGE_API_BUILD_KEY, String(result.api_build || 'eski'));
+    if (bioSupported && enableBio) {
+      await setBiometricEnabled(true);
+    }
+    if (result.branding) {
+      setBranding(result.branding);
+      await saveSiteBranding(result.branding);
+    }
+    setHotelChoices(null);
+    setSocialTicket('');
+    onLoginSuccess(result);
+  };
+
+  const applyAuthResult = async (result) => {
+    if (result?.needs_hotel_selection && Array.isArray(result.hotels)) {
+      setHotelChoices(result.hotels);
+      setSocialTicket(String(result.social_ticket || ''));
+      setError('');
+      return;
+    }
+    await finishLogin(result);
+  };
+
+  const handleLogin = async (selectedHotel = null) => {
+    if (socialTicket && selectedHotel) {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await AuthAPI.social({ socialTicket, hotel: selectedHotel });
+        await applyAuthResult(result);
+      } catch (err) {
+        setError(err.message || 'Giriş başarısız.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    const u = email.trim().toLowerCase();
     const p = password.trim();
     if (!u || !p) {
-      setError('Lütfen tüm alanları doldurun.');
+      setError('Lütfen e-posta ve şifrenizi girin.');
+      return;
+    }
+    if (!u.includes('@')) {
+      setError('Giriş e-posta ile yapılır.');
       return;
     }
 
@@ -70,21 +115,11 @@ export default function LoginScreen({ onLoginSuccess }) {
         return;
       }
 
-      const result = await AuthAPI.login(u, p);
-      await storageSetItem(STORAGE_TOKEN_KEY, result.token);
-      await AsyncStorage.setItem(STORAGE_ADMIN_KEY, JSON.stringify(result.admin || {}));
-      await AsyncStorage.setItem(STORAGE_API_BUILD_KEY, String(result.api_build || 'eski'));
-      if (bioSupported && enableBio) {
-        await setBiometricEnabled(true);
-      }
-      if (result.branding) {
-        setBranding(result.branding);
-        await saveSiteBranding(result.branding);
-      }
-      onLoginSuccess(result);
+      const result = await AuthAPI.login(u, p, selectedHotel);
+      await applyAuthResult(result);
     } catch (err) {
       if (err.status === 401) {
-        setError('Kullanıcı adı veya şifre hatalı. Web admin ile aynı bilgileri girin (@ işareti olmadan).');
+        setError('E-posta veya şifre hatalı. Web paneldeki e-posta ile girin.');
       } else if (err.status === 429) {
         setError('Çok fazla deneme. 15 dakika sonra tekrar deneyin.');
       } else if (err.status === 503) {
@@ -110,29 +145,19 @@ export default function LoginScreen({ onLoginSuccess }) {
         >
           <View style={styles.loginCard}>
             <View style={styles.cardTopBorder} />
-            {branding?.logo_url ? (
-              <Image
-                source={{ uri: branding.logo_url }}
-                style={styles.loginLogo}
-                resizeMode="contain"
-                accessibilityLabel={branding.site_name || 'Otel logosu'}
-              />
-            ) : (
-              <Text style={styles.icon}>🛡️</Text>
-            )}
-            <Text style={styles.title}>Personel Girişi</Text>
-            <Text style={styles.subtitle}>
-              {branding?.site_name ? `${branding.site_name} Yönetim Paneli` : 'Otel Yönetim Sistemi'}
-            </Text>
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.loginLogo}
+              resizeMode="contain"
+              accessibilityLabel="MyStoneINN"
+            />
+            <Text style={styles.title}>Otel girişi</Text>
+            <Text style={styles.subtitle}>MyStoneINN yönetim uygulaması</Text>
 
             {apiStatus && !apiStatus.ok ? (
               <View style={styles.warnBox}>
                 <Text style={styles.warnText}>⚠️ {apiStatus.message}</Text>
               </View>
-            ) : null}
-
-            {apiStatus?.ok ? (
-              <Text style={styles.apiOkText}>API bağlantısı hazır</Text>
             ) : null}
 
             {error ? (
@@ -141,16 +166,39 @@ export default function LoginScreen({ onLoginSuccess }) {
               </View>
             ) : null}
 
-            <Text style={styles.label}>Kullanıcı Adı</Text>
+            {hotelChoices?.length ? (
+              <View style={styles.hotelBox}>
+                <Text style={styles.label}>Otel seçin</Text>
+                {hotelChoices.map((h) => (
+                  <AppPressable
+                    key={String(h.hotel_id)}
+                    title={h.name || h.slug}
+                    color={COLORS.primary}
+                    disabled={loading}
+                    onPress={() => handleLogin(h)}
+                    style={styles.hotelBtn}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            <Text style={styles.label}>E-posta</Text>
             <View style={styles.inputGroup}>
-              <Text style={styles.inputIcon}>👤</Text>
+              <Text style={styles.inputIcon}>✉️</Text>
               <TextInput
                 style={styles.input}
-                placeholder="kullanici_adi"
+                placeholder="ornek@otel.com"
                 placeholderTextColor={COLORS.textMuted}
                 autoCapitalize="none"
-                value={username}
-                onChangeText={setUsername}
+                autoCorrect={false}
+                keyboardType="email-address"
+                textContentType="emailAddress"
+                value={email}
+                onChangeText={(t) => {
+                  setEmail(t);
+                  setHotelChoices(null);
+                  setSocialTicket('');
+                }}
                 editable={!loading}
               />
             </View>
@@ -166,7 +214,7 @@ export default function LoginScreen({ onLoginSuccess }) {
                 value={password}
                 onChangeText={setPassword}
                 editable={!loading}
-                onSubmitEditing={handleLogin}
+                onSubmitEditing={() => handleLogin()}
               />
             </View>
 
@@ -185,16 +233,20 @@ export default function LoginScreen({ onLoginSuccess }) {
               </Pressable>
             ) : null}
 
-            <AppPressable
-              title={loading ? '' : 'Giriş Yap →'}
-              color={COLORS.primary}
-              loading={loading}
-              disabled={loading}
-              onPress={handleLogin}
-              style={styles.button}
-            />
+            {!hotelChoices?.length ? (
+              <>
+                <AppPressable
+                  title={loading ? '' : 'Giriş Yap →'}
+                  color={COLORS.primary}
+                  loading={loading}
+                  disabled={loading}
+                  onPress={() => handleLogin()}
+                  style={styles.button}
+                />
+              </>
+            ) : null}
           </View>
-          <Text style={styles.footer}>© {BRAND_NAME} · APK v{Constants.expoConfig?.version || '1.0.10'}</Text>
+          <Text style={styles.footer}>© {BRAND_NAME} · APK v{Constants.expoConfig?.version || '1.0.14'}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -283,6 +335,42 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  hotelBox: {
+    marginBottom: 12,
+    gap: 8,
+  },
+  hotelBtn: {
+    marginTop: 6,
+    minHeight: 44,
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  orLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
+  orText: { color: COLORS.textMuted, fontWeight: '700', fontSize: 12 },
+  appleBtn: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  appleBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  googleBtn: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#dadce0',
+  },
+  googleBtnText: { color: '#1f1f1f', fontWeight: '700', fontSize: 16 },
   bioRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -318,13 +406,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   warnText: { color: '#856404', fontWeight: '700', fontSize: 13 },
-  apiOkText: {
-    textAlign: 'center',
-    color: COLORS.success,
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
   errorText: { color: COLORS.danger, fontWeight: '700', fontSize: 14 },
   footer: {
     textAlign: 'center',

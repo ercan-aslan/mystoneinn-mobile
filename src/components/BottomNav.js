@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../theme';
@@ -19,6 +19,7 @@ const ICON_MAP = {
   'bar-chart': 'bar-chart',
   images: 'images',
   ticket: 'ticket',
+  clipboard: 'clipboard-outline',
   compass: 'compass',
   'git-network': 'git-network',
   settings: 'settings',
@@ -28,29 +29,19 @@ const ICON_MAP = {
   'qr-code': 'qr-code',
 };
 
-export default function BottomNav({ items, activeScreen, onNavigate, centered }) {
+export default function BottomNav({ items, activeScreen, onNavigate }) {
   const insets = useSafeAreaInsets();
-  // Android 3 tuşlu / gesture bar altında kalmasın
+  const { width } = useWindowDimensions();
   const bottomPad = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 8);
+  const sidePad = 12 + Math.max(insets.left, insets.right, 0);
 
   return (
-    <View style={[styles.wrapper, { paddingBottom: bottomPad }]}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.container,
-          centered && styles.centered,
-        ]}
-      >
+    <View style={[styles.wrapper, { width, paddingBottom: bottomPad, paddingHorizontal: sidePad }]}>
+      <View style={styles.row}>
         {items.map((item) => {
           const active = activeScreen === item.screen;
           const isDanger = item.danger;
-          const color = active
-            ? '#fff'
-            : isDanger
-              ? COLORS.danger
-              : COLORS.navInactive;
+          const color = active ? '#fff' : isDanger ? COLORS.danger : COLORS.navInactive;
 
           return (
             <TouchableOpacity
@@ -62,24 +53,28 @@ export default function BottomNav({ items, activeScreen, onNavigate, centered })
               onPress={() => onNavigate(item.screen)}
               activeOpacity={0.7}
             >
-              <Ionicons
-                name={ICON_MAP[item.icon] || 'ellipse'}
-                size={active ? 21 : 20}
-                color={color}
-              />
-              <Text style={[styles.label, { color }, active && styles.labelActive]}>
+              <View>
+                <Ionicons name={ICON_MAP[item.icon] || 'ellipse'} size={active ? 21 : 20} color={color} />
+                {item.badge ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{item.badge > 99 ? '99+' : String(item.badge)}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.label, { color }, active && styles.labelActive]} numberOfLines={1}>
                 {item.title}
               </Text>
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
+    alignSelf: 'stretch',
     backgroundColor: COLORS.surface,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
@@ -89,21 +84,19 @@ const styles = StyleSheet.create({
     shadowRadius: 15,
     elevation: 8,
   },
-  container: {
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    gap: 15,
+  row: {
+    width: '100%',
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  centered: {
-    flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'space-evenly',
+    paddingTop: 8,
   },
   item: {
-    minWidth: 56,
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
     borderRadius: 10,
   },
   itemActive: {
@@ -116,8 +109,26 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     marginTop: 3,
+    textAlign: 'center',
   },
   labelActive: {
+    fontWeight: '800',
+  },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: COLORS.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 9,
     fontWeight: '800',
   },
 });

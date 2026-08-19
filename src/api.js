@@ -12,6 +12,7 @@ export const STORAGE_TOKEN_KEY = '@mystoneinn_admin_token';
 export const STORAGE_ADMIN_KEY = '@mystoneinn_admin_profile';
 export const STORAGE_API_BUILD_KEY = '@mystoneinn_api_build';
 export const STORAGE_BRANDING_KEY = '@mystoneinn_site_branding';
+export const STORAGE_HOTEL_KEY = '@mystoneinn_hotel';
 
 const API_TIMEOUT_MS = 30000;
 
@@ -19,6 +20,7 @@ export async function clearAuthStorage() {
   await storageRemoveItem(STORAGE_TOKEN_KEY);
   await AsyncStorage.removeItem(STORAGE_ADMIN_KEY);
   await AsyncStorage.removeItem(STORAGE_API_BUILD_KEY);
+  await AsyncStorage.removeItem(STORAGE_HOTEL_KEY);
 }
 
 export async function saveSiteBranding(branding) {
@@ -52,10 +54,22 @@ function apiPath(path) {
 
 async function apiRequest(path, options = {}) {
   const token = await storageGetItem(STORAGE_TOKEN_KEY);
+  let hotelHeaders = {};
+  try {
+    const rawHotel = await AsyncStorage.getItem(STORAGE_HOTEL_KEY);
+    if (rawHotel) {
+      const hotel = JSON.parse(rawHotel);
+      if (hotel?.hotel_id) hotelHeaders['X-Hotel-Id'] = String(hotel.hotel_id);
+      if (hotel?.slug) hotelHeaders['X-Hotel-Slug'] = String(hotel.slug);
+    }
+  } catch {
+    // ignore
+  }
   const headers = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...hotelHeaders,
     ...(options.headers || {}),
   };
 
@@ -115,7 +129,7 @@ async function apiRequest(path, options = {}) {
     const error = new Error(
       message
         || (response.status === 401 && isLoginRequest
-          ? 'Kullanıcı adı veya şifre hatalı.'
+          ? 'E-posta veya şifre hatalı.'
           : response.status === 401
             ? 'Oturum süresi doldu. Tekrar giriş yapın.'
             : `HTTP ${response.status}`)
@@ -148,7 +162,7 @@ export function normalizeFetchError(err, fallback = 'Veri yüklenemedi.') {
   return msg;
 }
 
-export const EXPECTED_API_BUILD = '20260719-detail-v5';
+export const EXPECTED_API_BUILD = '20260819-cases-v4';
 
 function isFullReservationRow(row) {
   if (!row || Array.isArray(row)) {
@@ -395,13 +409,46 @@ export function snapshotToReservation(snapshot, id) {
 }
 
 export const AuthAPI = {
-  login: async (username, password) => {
+  login: async (email, password, hotel = null) => {
+    const body = { email, password };
+    if (hotel?.hotel_id) body.hotel_id = hotel.hotel_id;
+    if (hotel?.slug) body.hotel_slug = hotel.slug;
     const payload = await apiRequest('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
+    if (payload?.needs_hotel_selection) {
+      return payload;
+    }
     if (!payload?.token) {
       throw new Error('Sunucu giriş yanıtı geçersiz (token yok).');
+    }
+    if (payload.hotel) {
+      await AsyncStorage.setItem(STORAGE_HOTEL_KEY, JSON.stringify(payload.hotel));
+    }
+    return payload;
+  },
+  social: async ({ ticket, socialTicket, identityToken, email, fullName, hotel } = {}) => {
+    const body = {};
+    if (ticket) body.ticket = ticket;
+    if (socialTicket) body.social_ticket = socialTicket;
+    if (identityToken) body.identity_token = identityToken;
+    if (email) body.email = email;
+    if (fullName) body.full_name = fullName;
+    if (hotel?.hotel_id) body.hotel_id = hotel.hotel_id;
+    if (hotel?.slug) body.hotel_slug = hotel.slug;
+    const payload = await apiRequest('/auth/social', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (payload?.needs_hotel_selection) {
+      return payload;
+    }
+    if (!payload?.token) {
+      throw new Error('Sunucu giriş yanıtı geçersiz (token yok).');
+    }
+    if (payload.hotel) {
+      await AsyncStorage.setItem(STORAGE_HOTEL_KEY, JSON.stringify(payload.hotel));
     }
     return payload;
   },
@@ -698,10 +745,20 @@ export const InventoryAPI = {
         status,
       }),
     }),
-  updateStatus: (inventoryId, status) =>
+  placeOrder: (inventoryId, payload) =>
     apiRequest('/inventory_actions', {
       method: 'POST',
-      body: JSON.stringify({ action: 'update_status', inventory_id: inventoryId, status }),
+      body: JSON.stringify({ action: 'place_order', inventory_id: inventoryId, ...payload }),
+    }),
+  receiveOrder: (inventoryId, payload) =>
+    apiRequest('/inventory_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'receive_order', inventory_id: inventoryId, ...payload }),
+    }),
+  addStock: (inventoryId, payload) =>
+    apiRequest('/inventory_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'add_stock', inventory_id: inventoryId, ...payload }),
     }),
   remove: (inventoryId) =>
     apiRequest('/inventory_actions', {
@@ -785,6 +842,42 @@ export const CouponsAPI = {
       method: 'POST',
       body: JSON.stringify({ action: 'delete', coupon_id: couponId }),
     }),
+};
+
+export const CasesAPI = {
+  list: (filter = 'open', lookups = true) =>
+    apiRequest(`/cases?filter=${encodeURIComponent(filter)}&lookups=${lookups ? '1' : '0'}`),
+  detail: (id) => apiRequest(`/case_detail?id=${encodeURIComponent(id)}`),
+  create: (payload) =>
+    apiRequest('/cases_actions', { method: 'POST', body: JSON.stringify({ action: 'create', ...payload }) }),
+  comment: (caseId, body) =>
+    apiRequest('/cases_actions', { method: 'POST', body: JSON.stringify({ action: 'comment', case_id: caseId, body }) }),
+  photo: (caseId, imageBase64, extension = 'jpg') =>
+    apiRequest('/cases_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'photo', case_id: caseId, image_base64: imageBase64, extension }),
+    }),
+  deletePhoto: (caseId, eventId) =>
+    apiRequest('/cases_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'delete_photo', case_id: caseId, event_id: eventId }),
+    }),
+  status: (caseId, status) =>
+    apiRequest('/cases_actions', { method: 'POST', body: JSON.stringify({ action: 'status', case_id: caseId, status }) }),
+  assign: (caseId, assigneeAdminId) =>
+    apiRequest('/cases_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'assign', case_id: caseId, assignee_admin_id: assigneeAdminId }),
+    }),
+  update: (caseId, payload) =>
+    apiRequest('/cases_actions', { method: 'POST', body: JSON.stringify({ action: 'update', case_id: caseId, ...payload }) }),
+  close: (caseId, closeNote) =>
+    apiRequest('/cases_actions', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'close', case_id: caseId, close_note: closeNote }),
+    }),
+  reopen: (caseId) =>
+    apiRequest('/cases_actions', { method: 'POST', body: JSON.stringify({ action: 'reopen', case_id: caseId }) }),
 };
 
 export const ResourceAPI = {

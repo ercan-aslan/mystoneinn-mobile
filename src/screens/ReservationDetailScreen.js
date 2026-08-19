@@ -24,7 +24,7 @@ import {
   nightsBetweenIso,
   resolveReservationCurrency,
 } from '../utils/format';
-import { showMessage } from '../utils/alert';
+import { showMessage, showPrompt } from '../utils/alert';
 
 function money(res, amount) {
   return formatMoney(amount, resolveReservationCurrency(res));
@@ -312,6 +312,7 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
   const [busy, setBusy] = useState('');
   const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash' });
   const [newRoomId, setNewRoomId] = useState('');
+  const [unitId, setUnitId] = useState('');
   const [dateForm, setDateForm] = useState({ check_in: '', check_out: '' });
   const [serverBuild, setServerBuild] = useState('');
 
@@ -348,6 +349,7 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
   useEffect(() => {
     if (!res.reservation_id) return;
     setNewRoomId(String(res.room_id || ''));
+    setUnitId(String(res.assigned_unit_id || ''));
     setDateForm({
       check_in: res.check_in || '',
       check_out: res.check_out || '',
@@ -355,6 +357,7 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
   }, [
     res.reservation_id,
     res.room_id,
+    res.assigned_unit_id,
     res.check_in,
     res.check_out,
   ]);
@@ -374,8 +377,22 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
     }
   };
 
-  const onCancel = () =>
-    runAction('cancel', { cancel_reason: 'Mobil admin iptali' }, 'Rezervasyon iptal edildi.');
+  const onCancel = () => {
+    showPrompt(
+      'Rezervasyonu iptal et',
+      'İptal nedenini yazın. Bu alan zorunludur (en az 5 karakter).',
+      (reason) => {
+        runAction('cancel', { cancel_reason: reason }, 'Rezervasyon iptal edildi.');
+      },
+      {
+        placeholder: 'Örn: Misafir iptal etti, tarih değişikliği…',
+        confirmText: 'İptal et',
+        cancelText: 'Vazgeç',
+        destructive: true,
+        minLength: 5,
+      }
+    );
+  };
 
   const onRestore = () =>
     runAction('restore', {}, 'Rezervasyon geri alındı.');
@@ -389,6 +406,11 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
     value: r.room_id,
     label: r.room_name,
   }));
+  const unitOptions = (res.units || []).map((u) => ({
+    value: u.unit_id,
+    label: u.busy ? `${u.unit_code} (dolu)` : u.unit_code,
+  }));
+  const showUnitPicker = (res.units || []).length > 1;
 
   const onChangeRoom = async () => {
     if (!newRoomId) {
@@ -484,6 +506,7 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         >
           {isPartial ? (
             <View style={styles.previewBanner}>
@@ -500,6 +523,33 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
           ) : null}
 
           <HeroCard res={res} channel={channel} nights={nights} />
+
+          {showUnitPicker ? (
+            <View style={styles.surfaceCard}>
+              <SectionTitle icon="keypad-outline" title="Oda no" />
+              <SelectField
+                placeholder="Oda numarası seçin"
+                value={unitId}
+                options={unitOptions}
+                onChange={setUnitId}
+              />
+              <SubmitButton
+                title="Oda no kaydet"
+                loading={busy === 'assign_unit'}
+                onPress={() =>
+                  runAction(
+                    'assign_unit',
+                    { assigned_unit_id: Number(unitId || 0) },
+                    'Oda numarası kaydedildi.'
+                  )
+                }
+              />
+            </View>
+          ) : res.unit_code ? (
+            <View style={styles.surfaceCard}>
+              <InfoRow label="Oda no" value={res.unit_code} last />
+            </View>
+          ) : null}
 
           <PriceSummaryRow res={res} />
 
@@ -667,7 +717,7 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
                 title="Check-in Yap"
                 color={COLORS.success}
                 loading={busy === 'check_in'}
-                onPress={() => runAction('check_in')}
+                onPress={() => runAction('check_in', { assigned_unit_id: Number(unitId || 0) })}
               />
               <SubmitButton
                 title="Check-out Yap"
@@ -675,13 +725,11 @@ export default function ReservationDetailScreen({ reservationId, initialSnapshot
                 loading={busy === 'check_out'}
                 onPress={() => runAction('check_out')}
               />
-              <ConfirmButton
-                label="Rezervasyonu İptal Et"
-                confirmLabel="Evet, iptal et"
-                cancelLabel="Vazgeç"
+              <SubmitButton
+                title="Rezervasyonu İptal Et"
                 color={COLORS.danger}
-                busy={busy === 'cancel'}
-                onConfirm={onCancel}
+                loading={busy === 'cancel'}
+                onPress={onCancel}
               />
             </View>
           ) : null}

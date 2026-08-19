@@ -16,6 +16,13 @@ export default class AppErrorBoundary extends React.Component {
     console.error('AppErrorBoundary', error);
   }
 
+  handleRetry = () => {
+    this.setState({ error: null });
+    if (typeof this.props.onReset === 'function') {
+      this.props.onReset();
+    }
+  };
+
   render() {
     if (!this.state.error) {
       return this.props.children;
@@ -29,8 +36,8 @@ export default class AppErrorBoundary extends React.Component {
         <ScrollView style={styles.box} contentContainerStyle={styles.boxContent}>
           <Text style={styles.message}>{message}</Text>
         </ScrollView>
-        <Pressable style={styles.button} onPress={() => this.setState({ error: null })}>
-          <Text style={styles.buttonText}>Tekrar dene</Text>
+        <Pressable style={styles.button} onPress={this.handleRetry}>
+          <Text style={styles.buttonText}>Girişe dön</Text>
         </Pressable>
       </View>
     );

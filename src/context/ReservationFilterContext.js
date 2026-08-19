@@ -1,17 +1,17 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY = 'admin_show_channel_reservations';
+const STORAGE_KEY = 'admin_show_channel_reservations_v2';
 
 const ReservationFilterContext = createContext({
-  showChannelReservations: false,
+  showChannelReservations: true,
   setShowChannelReservations: () => {},
-  websiteOnly: true,
+  websiteOnly: false,
   ready: false,
 });
 
 export function ReservationFilterProvider({ children }) {
-  const [showChannelReservations, setShowChannelReservationsState] = useState(false);
+  const [showChannelReservations, setShowChannelReservationsState] = useState(true);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -19,7 +19,11 @@ export function ReservationFilterProvider({ children }) {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((value) => {
         if (!mounted) return;
-        setShowChannelReservationsState(value === '1');
+        if (value === '0') {
+          setShowChannelReservationsState(false);
+        } else {
+          setShowChannelReservationsState(true);
+        }
       })
       .finally(() => {
         if (mounted) setReady(true);

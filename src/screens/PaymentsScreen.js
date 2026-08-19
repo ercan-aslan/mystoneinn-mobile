@@ -106,18 +106,16 @@ export default function PaymentsScreen() {
             pay.amount_formatted
             || formatMoney(pay.amount, pay.currency || resolveReservationCurrency(pay));
 
+          const openPay = () => {
+            if (!pay.reservation_id) return;
+            openReservation(pay.reservation_id, {
+              reservation_id: pay.reservation_id,
+              guest_name: pay.user_name,
+            });
+          };
           return (
-            <Pressable
-              key={key}
-              onPress={() =>
-                pay.reservation_id &&
-                openReservation(pay.reservation_id, {
-                  reservation_id: pay.reservation_id,
-                  guest_name: pay.user_name,
-                })
-              }
-            >
-              <MobileCard borderColor={statusColor(pay, tab)}>
+            <MobileCard key={key} borderColor={statusColor(pay, tab)}>
+              <Pressable onPress={openPay}>
                 <View style={styles.row}>
                   <Text style={styles.customer} numberOfLines={1}>
                     👤 {pay.user_name}
@@ -138,19 +136,11 @@ export default function PaymentsScreen() {
                 <Text style={styles.date}>
                   Ödeme: {pay.created_at_formatted || pay.display_date || formatDateTime(pay.created_at)}
                 </Text>
-                {pay.reservation_id ? (
-                  <SubmitButton
-                    title="Rezervasyon Detayı"
-                    onPress={() =>
-                      openReservation(pay.reservation_id, {
-                        reservation_id: pay.reservation_id,
-                        guest_name: pay.user_name,
-                      })
-                    }
-                  />
-                ) : null}
-              </MobileCard>
-            </Pressable>
+              </Pressable>
+              {pay.reservation_id ? (
+                <SubmitButton title="Rezervasyon Detayı" onPress={openPay} />
+              ) : null}
+            </MobileCard>
           );
         })
       )}

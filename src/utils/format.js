@@ -501,7 +501,9 @@ export function overlayPendingHoldsOnGrid(grid, reservationMeta = {}, days = [])
     const checkOut = String(meta.check_out || '');
     if (!roomId || !checkIn || !checkOut || checkOut <= checkIn) continue;
 
-    if (!next[roomId]) next[roomId] = {};
+    const bucketKey =
+      Object.keys(next).find((key) => key === roomId || key.startsWith(`${roomId}:`)) || roomId;
+    if (!next[bucketKey]) next[bucketKey] = {};
 
     const visibleDays = days.length
       ? days.filter((day) => day.date >= checkIn && day.date < checkOut)
@@ -510,7 +512,7 @@ export function overlayPendingHoldsOnGrid(grid, reservationMeta = {}, days = [])
     if (!visibleDays.length) continue;
 
     const anchorDate = visibleDays[0].date;
-    const existing = next[roomId][anchorDate];
+    const existing = next[bucketKey][anchorDate];
     if (existing?.type === 'reservation') continue;
 
     const anchorIdx = days.length ? days.findIndex((day) => day.date === anchorDate) : 0;
@@ -519,7 +521,7 @@ export function overlayPendingHoldsOnGrid(grid, reservationMeta = {}, days = [])
     const colspan = Math.max(1, Math.min(spanNights, colsLeft));
     const guestLabel = resolveWebsiteGuestName(meta) || meta.guest_name || 'Misafir';
 
-    next[roomId][anchorDate] = {
+    next[bucketKey][anchorDate] = {
       type: 'reservation',
       label: guestLabel,
       colspan,
@@ -611,20 +613,32 @@ export function getChannelStyle(channel, row = null) {
   const record = row && typeof row === 'object' ? row : { channel };
   const color = getCalendarReservationColor(channel, record);
 
-  if (isUnpaidWebHold(record)) {
-    return { label: 'Web — ödeme bekliyor', color };
+    if (isUnpaidWebHold(record)) {
+      return { label: 'Web Sitesi — ödeme bekliyor', color };
+    }
+    if (isWebSiteReservation(record)) {
+      return { label: 'Web Sitesi', color };
+    }
+
+  const raw = String(channel || '').trim();
+  const key = raw.toLowerCase();
+  if (key.includes('mobil')) {
+    return { label: 'Mobil Uygulama', color };
   }
-  if (isWebSiteReservation(record)) {
-    return { label: 'Web Sitesi', color };
+  if (key.includes('panel') || key.includes('yönetim')) {
+    return { label: 'Yönetim Paneli', color };
+  }
+  if (key === 'manuel' || key === 'manuel kayıt') {
+    return { label: 'Manuel', color };
   }
 
-  const label = String(channel || '').trim() || 'HotelRunner';
+  const label = raw || 'HotelRunner';
   return { label, color };
 }
 
 export const CALENDAR_LEGEND = [
-  { color: '#fd7e14', label: 'Web — ödeme bekliyor' },
-  { color: '#9ca3af', label: 'Web — onaylı' },
+  { color: '#fd7e14', label: 'Web Sitesi — ödeme bekliyor' },
+  { color: '#9ca3af', label: 'Web Sitesi — onaylı' },
   { color: '#0d6efd', label: 'OTA / HotelRunner' },
 ];
 

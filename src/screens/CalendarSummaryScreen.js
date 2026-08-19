@@ -9,19 +9,47 @@ import { Ionicons } from '@expo/vector-icons';
 import PageScaffold from '../components/PageScaffold';
 import TabPills from '../components/TabPills';
 import AppPressable from '../components/AppPressable';
-import { CalendarSummaryAPI } from '../api';
+import SelectField, { SubmitButton } from '../components/SelectField';
+import { CalendarSummaryAPI, ReservationAPI } from '../api';
 import { useFetch } from '../hooks/useFetch';
 import { COLORS } from '../theme';
 import { formatDate } from '../utils/format';
+import { showMessage } from '../utils/alert';
 
 const TAB_META = {
   giris: { label: 'Girişler', shortLabel: 'Giriş', color: COLORS.success },
   cikis: { label: 'Çıkışlar', shortLabel: 'Çıkış', color: COLORS.info },
   yeni: { label: 'Bugün Gelen', shortLabel: 'Yeni', color: '#ffc107' },
   coklu: { label: 'Çoklu Rez.', shortLabel: 'Çoklu', color: COLORS.danger, danger: true },
+  atanmamis: { label: 'Oda eklenmemiş', shortLabel: 'Oda yok', color: '#fd7e14' },
 };
 
-function SummaryRow({ item, onPress, showCreatedAt = false }) {
+function SummaryRow({ item, onPress, showCreatedAt = false, onAssigned }) {
+  const [unitId, setUnitId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const unitOptions = (item.units || []).map((u) => ({ value: u.unit_id, label: u.unit_code }));
+
+  const saveUnit = async () => {
+    if (!unitId) {
+      showMessage('Eksik alan', 'Oda numarası seçin.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await ReservationAPI.action({
+        action: 'assign_unit',
+        reservation_id: item.reservation_id,
+        assigned_unit_id: Number(unitId),
+      });
+      showMessage('Başarılı', 'Oda numarası kaydedildi.');
+      onAssigned?.();
+    } catch (err) {
+      showMessage('Hata', err.message || 'Kaydedilemedi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Pressable style={styles.row} onPress={() => onPress?.(item)}>
       <View style={styles.rowTop}>
@@ -36,6 +64,19 @@ function SummaryRow({ item, onPress, showCreatedAt = false }) {
       ) : null}
       <Text style={styles.rowGuest}>{item.guest_name || 'Misafir'}</Text>
       <Text style={styles.rowChannel}>{item.channel_label || item.channel || '—'}</Text>
+      {item.needs_unit && unitOptions.length > 0 ? (
+        <View style={styles.assignRow}>
+          <View style={styles.assignSelect}>
+            <SelectField
+              placeholder="Oda no"
+              value={unitId}
+              options={unitOptions}
+              onChange={setUnitId}
+            />
+          </View>
+          <SubmitButton title="Kaydet" loading={saving} onPress={saveUnit} />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -68,6 +109,7 @@ export default function CalendarSummaryScreen({ initialTab = 'giris', onClose, o
     cikis: 'Bugün çıkış yapacak misafir yok.',
     yeni: 'Bugün oluşturulan yeni rezervasyon yok.',
     coklu: 'Aktif kayıtlarda çoklu rezervasyon yok.',
+    atanmamis: 'Oda eklenmemiş rezervasyon yok.',
   };
 
   const handleOpenReservation = (item) => {
@@ -129,6 +171,7 @@ export default function CalendarSummaryScreen({ initialTab = 'giris', onClose, o
                 key={String(item.reservation_id)}
                 item={item}
                 onPress={handleOpenReservation}
+                onAssigned={refresh}
                 showCreatedAt={activeTab === 'yeni'}
               />
             ))}
@@ -181,6 +224,12 @@ const styles = StyleSheet.create({
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+  },
+  assignRow: {
+    marginTop: 8,
+  },
+  assignSelect: {
+    marginBottom: 6,
   },
   rowTop: {
     flexDirection: 'row',

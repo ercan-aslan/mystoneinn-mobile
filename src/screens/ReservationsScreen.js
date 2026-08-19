@@ -3,8 +3,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import PageScaffold from '../components/PageScaffold';
 import MobileCard from '../components/MobileCard';
 import TabPills from '../components/TabPills';
-import { SubmitButton } from '../components/SelectField';
-import { ReservationsAPI, CancellationsAPI } from '../api';
+import SelectField, { SubmitButton } from '../components/SelectField';
+import { ReservationsAPI, CancellationsAPI, ReservationAPI } from '../api';
 import { useAppNavigation } from '../context/NavigationContext';
 import { useReservationFilter } from '../context/ReservationFilterContext';
 import { COLORS } from '../theme';
@@ -30,6 +30,51 @@ const DEFAULT_SORT = {
 function filterVisibleRows(rows, showChannelReservations) {
   if (showChannelReservations) return rows;
   return rows.filter((item) => !isIcalListReservation(item));
+}
+
+function ReservationUnitAssign({ item, onAssigned }) {
+  const [unitId, setUnitId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const unitOptions = (item.units || [])
+    .filter((u) => !u.busy)
+    .map((u) => ({ value: u.unit_id, label: u.unit_code }));
+
+  if (!item.needs_unit || unitOptions.length === 0) {
+    return null;
+  }
+
+  const saveUnit = async () => {
+    if (!unitId) {
+      showMessage('Eksik alan', 'Oda numarası seçin.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await ReservationAPI.action({
+        action: 'assign_unit',
+        reservation_id: item.reservation_id,
+        assigned_unit_id: Number(unitId),
+      });
+      showMessage('Başarılı', 'Oda numarası kaydedildi.');
+      onAssigned?.();
+    } catch (err) {
+      showMessage('Hata', err.message || 'Kaydedilemedi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={styles.assignWrap}>
+      <SelectField
+        placeholder="Oda no seçin"
+        value={unitId}
+        options={unitOptions}
+        onChange={setUnitId}
+      />
+      <SubmitButton title="Oda no kaydet" loading={saving} onPress={saveUnit} />
+    </View>
+  );
 }
 
 export default function ReservationsScreen({ initialTab = 'confirmed' }) {
@@ -127,12 +172,14 @@ export default function ReservationsScreen({ initialTab = 'confirmed' }) {
       (item.channel_name !== 'Manuel Kayıt' ? item.channel_name : null) ||
       'Misafir';
     const channel = getChannelStyle(item.channel, item);
+    const reservationId = item.reservation_id || item.id;
+    const openDetail = () => openReservation(reservationId, item);
+    const roomLine = item.unit_code
+      ? `${item.room_name || 'Oda'} · ${item.unit_code}`
+      : item.room_name || 'Oda';
     return (
-      <Pressable
-        key={String(item.reservation_id || item.id)}
-        onPress={() => openReservation(item.reservation_id || item.id, item)}
-      >
-        <MobileCard borderColor={COLORS.primary}>
+      <MobileCard key={String(reservationId)} borderColor={COLORS.primary}>
+        <Pressable onPress={openDetail}>
           <View style={styles.row}>
             <Text style={styles.guest} numberOfLines={1}>
               {guest}
@@ -140,7 +187,7 @@ export default function ReservationsScreen({ initialTab = 'confirmed' }) {
             <Text style={styles.price}>{formatReservationMoney(item)}</Text>
           </View>
           <Text style={styles.meta}>
-            🚪 {item.room_name || 'Oda'} | {formatDateShort(item.check_in)} -{' '}
+            🚪 {roomLine} | {formatDateShort(item.check_in)} -{' '}
             {formatDateShort(item.check_out)}
           </Text>
           {item.created_at_formatted || item.created_at ? (
@@ -151,13 +198,11 @@ export default function ReservationsScreen({ initialTab = 'confirmed' }) {
           <View style={[styles.channelBadge, { backgroundColor: channel.color }]}>
             <Text style={styles.channelText}>{channel.label}</Text>
           </View>
-          <Text style={styles.idText}>#{item.reservation_id}</Text>
-          <SubmitButton
-            title="Detay Aç"
-            onPress={() => openReservation(item.reservation_id || item.id, item)}
-          />
-        </MobileCard>
-      </Pressable>
+          <Text style={styles.idText}>#{reservationId}</Text>
+        </Pressable>
+        <ReservationUnitAssign item={item} onAssigned={() => load(tab, true)} />
+        <SubmitButton title="Detay Aç" onPress={openDetail} />
+      </MobileCard>
     );
   };
 
@@ -299,4 +344,5 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     marginTop: 4,
   },
+  assignWrap: { marginTop: 10 },
 });

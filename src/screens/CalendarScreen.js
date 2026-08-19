@@ -1,20 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import PageScaffold from '../components/PageScaffold';
-import CalendarGrid from '../components/CalendarGrid';
+import CalendarGrid, { calendarRowKey } from '../components/CalendarGrid';
 import CalendarLegend from '../components/CalendarLegend';
-import FormCard, { FormInput, FormLabel } from '../components/FormCard';
+import { FormInput, FormLabel } from '../components/FormCard';
 import DateInput from '../components/DateInput';
 import SelectField, { SubmitButton } from '../components/SelectField';
-import AppPressable, { DeleteButton } from '../components/AppPressable';
 import { CalendarAPI, fetchReservationMetaForGrid, RoomsAPI } from '../api';
 import { useAppNavigation } from '../context/NavigationContext';
 import { useFetch } from '../hooks/useFetch';
@@ -28,41 +31,40 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import CalendarSummaryScreen from './CalendarSummaryScreen';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 
-function StatBox({ label, value, bg, icon, onPress, textDark = false }) {
+function StatBox({ label, value, bg, onPress, textDark = false }) {
   const content = (
     <>
       <Text style={[styles.statLabel, textDark && styles.statLabelDark]}>{label}</Text>
       <Text style={[styles.statValue, textDark && styles.statValueDark]}>{value}</Text>
-      {icon ? <Text style={styles.statIcon}>{icon}</Text> : null}
     </>
   );
 
   if (!onPress) {
-    return (
-      <View style={[styles.statBox, { backgroundColor: bg }]}>
-        {content}
-      </View>
-    );
+    return <View style={[styles.statBox, { backgroundColor: bg }]}>{content}</View>;
   }
 
   return (
-    <Pressable style={[styles.statBox, { backgroundColor: bg }]} onPress={onPress}>
+    <TouchableOpacity
+      style={[styles.statBox, { backgroundColor: bg }]}
+      onPress={onPress}
+      activeOpacity={0.85}
+      hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
+    >
       {content}
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
-const emptyRes = { room_id: '', check_in: '', check_out: '', guest_name: '', total_price: '' };
-const emptyAvail = { room_id: '', start_date: '', end_date: '', price_eur: '', status: 'open' };
-const emptyBlock = { room_id: '', check_in: '', check_out: '', summary: '' };
+const emptyRes = { room_id: '', assigned_unit_id: '', row_key: '', check_in: '', check_out: '', guest_name: '', total_price: '' };
 
 function findReservationSnapshot(grid, rooms, reservationId) {
   const targetId = Number(reservationId);
   if (!targetId) return null;
 
   for (const room of rooms || []) {
+    const rowKey = room.row_key || room.room_id;
     const roomId = Number(room.room_id);
-    const row = grid?.[roomId] || {};
+    const row = grid?.[rowKey] || grid?.[roomId] || {};
     for (const cell of Object.values(row)) {
       if (cell?.type === 'reservation' && Number(cell.reservation_id) === targetId) {
         return {
@@ -83,17 +85,23 @@ function findReservationSnapshot(grid, rooms, reservationId) {
   return null;
 }
 
-export default function CalendarScreen() {
+export default function CalendarScreen({ isFocused = true }) {
   const { openReservation, navigateTo } = useAppNavigation();
   const [startDate, setStartDate] = useState(null);
   const [resForm, setResForm] = useState(emptyRes);
-  const [availForm, setAvailForm] = useState(emptyAvail);
-  const [blockForm, setBlockForm] = useState(emptyBlock);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [bulkModalVisible, setBulkModalVisible] = useState(false);
   const [busy, setBusy] = useState('');
   const [feedback, setFeedback] = useState({ message: '', type: 'info' });
   const [fallbackRooms, setFallbackRooms] = useState([]);
   const [summaryTab, setSummaryTab] = useState(null);
+
+  useEffect(() => {
+    if (isFocused) return;
+    setBulkModalVisible(false);
+    setQuickOpen(false);
+    setSummaryTab(null);
+  }, [isFocused]);
 
   const loader = useCallback(async () => {
     const calRes = await CalendarAPI.get(startDate || undefined);
@@ -142,15 +150,22 @@ export default function CalendarScreen() {
       .catch(() => {});
   }, [cal?.rooms, fallbackRooms.length]);
 
+  const bulkRooms = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    rooms.forEach((r) => {
+      const id = Number(r.room_id);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      out.push({ ...r, room_name: r.type_name || r.room_name });
+    });
+    return out;
+  }, [rooms]);
+
   const roomOptions = useMemo(
-    () => rooms.map((r) => ({ value: r.room_id, label: r.room_name })),
+    () => rooms.map((r) => ({ value: calendarRowKey(r), label: r.room_name, room: r })),
     [rooms]
   );
-
-  const statusOptions = [
-    { value: 'open', label: 'Açık' },
-    { value: 'closed', label: 'Kapalı' },
-  ];
 
   const runAction = async (key, payload, onSuccess) => {
     setBusy(key);
@@ -185,13 +200,13 @@ export default function CalendarScreen() {
     }
   };
 
-  const isRangeAvailable = (roomId, checkIn, checkOut) => {
+  const isRangeAvailable = (rowKey, checkIn, checkOut) => {
     if (!checkIn || !checkOut || checkOut <= checkIn) return true;
-    const rid = String(roomId);
+    const key = String(rowKey);
     const grid = displayGrid || {};
     let cursor = checkIn;
     while (cursor < checkOut) {
-      const cell = grid[rid]?.[cursor] || grid[roomId]?.[cursor];
+      const cell = grid[key]?.[cursor];
       if (!cell || cell.type !== 'open') return false;
       cursor = addDaysIso(cursor, 1);
     }
@@ -205,7 +220,8 @@ export default function CalendarScreen() {
       showMessage('Eksik alan', msg);
       return;
     }
-    if (!isRangeAvailable(resForm.room_id, resForm.check_in, resForm.check_out)) {
+    const rangeKey = resForm.row_key || resForm.room_id;
+    if (!isRangeAvailable(rangeKey, resForm.check_in, resForm.check_out)) {
       const msg = 'Seçilen tarihler arasında dolu veya kapalı gün var.';
       setFeedback({ message: msg, type: 'error' });
       showMessage('Müsait değil', msg);
@@ -216,58 +232,17 @@ export default function CalendarScreen() {
       {
         action: 'create_manual_reservation',
         room_id: Number(resForm.room_id),
+        assigned_unit_id: Number(resForm.assigned_unit_id || 0),
         check_in: resForm.check_in,
         check_out: resForm.check_out,
         guest_name: resForm.guest_name,
         total_price: Number(resForm.total_price || 0),
       },
-      () => setResForm(emptyRes)
+      () => {
+        setResForm(emptyRes);
+        setQuickOpen(false);
+      }
     );
-  };
-
-  const onSaveAvailability = () => {
-    if (!availForm.room_id || !availForm.start_date || !availForm.end_date) {
-      const msg = 'Oda ve tarih aralığı zorunludur.';
-      setFeedback({ message: msg, type: 'error' });
-      showMessage('Eksik alan', msg);
-      return;
-    }
-    runAction(
-      'avail',
-      {
-        action: 'availability',
-        room_id: Number(availForm.room_id),
-        start_date: availForm.start_date,
-        end_date: availForm.end_date,
-        price_eur: Number(availForm.price_eur || 0),
-        status: availForm.status,
-      },
-      () => setAvailForm(emptyAvail)
-    );
-  };
-
-  const onSaveBlock = () => {
-    if (!blockForm.room_id || !blockForm.check_in || !blockForm.check_out) {
-      const msg = 'Oda ve tarihler zorunludur.';
-      setFeedback({ message: msg, type: 'error' });
-      showMessage('Eksik alan', msg);
-      return;
-    }
-    runAction(
-      'block',
-      {
-        action: 'create_manual_block',
-        room_id: Number(blockForm.room_id),
-        check_in: blockForm.check_in,
-        check_out: blockForm.check_out,
-        summary: blockForm.summary || 'Blokaj',
-      },
-      () => setBlockForm(emptyBlock)
-    );
-  };
-
-  const onDeleteBlock = (blockId) => {
-    runAction('del', { action: 'delete_block', block_id: blockId });
   };
 
   const onSaveBulk = (payload) => {
@@ -278,48 +253,45 @@ export default function CalendarScreen() {
     );
   };
 
-  const onCellPress = (roomId, date, cell) => {
-    if (cell?.type !== 'open') {
-      showMessage('Müsait değil', 'Sadece müsait (fiyatlı) günler seçilebilir.');
-      return;
-    }
-
-    setResForm((prev) => {
-      const sameRoom = prev.room_id && String(prev.room_id) === String(roomId);
-      const hasCompleteRange = prev.check_in && prev.check_out;
-
-      if (!sameRoom || hasCompleteRange) {
-        return { ...prev, room_id: roomId, check_in: date, check_out: '' };
-      }
-
-      if (!prev.check_out) {
-        if (date === prev.check_in) {
-          const checkOut = addDaysIso(date, 1);
-          if (!isRangeAvailable(roomId, date, checkOut)) {
-            showMessage('Müsait değil', 'Seçilen aralıkta dolu veya kapalı gün var.');
-            return { ...prev, room_id: roomId, check_in: date, check_out: '' };
-          }
-          return { ...prev, room_id: roomId, check_out: checkOut };
-        }
-
-        if (date < prev.check_in) {
-          return { ...prev, room_id: roomId, check_in: date, check_out: '' };
-        }
-
-        if (!isRangeAvailable(roomId, prev.check_in, date)) {
-          showMessage('Müsait değil', 'Giriş ile çıkış arasında dolu veya kapalı gün var.');
-          return { ...prev, room_id: roomId, check_in: date, check_out: '' };
-        }
-
-        return { ...prev, room_id: roomId, check_out: date };
-      }
-
-      return prev;
+  const onCellPress = (room, date, cell) => {
+    if (cell?.type !== 'open') return;
+    const roomId = room?.room_id ?? room;
+    const rowKey = calendarRowKey(typeof room === 'object' ? room : { room_id: roomId });
+    const unitId = Number(room?.unit_id || 0);
+    const checkOut = addDaysIso(date, 1);
+    const dayPrice = Number(cal?.day_state?.[roomId]?.[date]?.price_eur || 0);
+    setResForm({
+      ...emptyRes,
+      room_id: roomId,
+      row_key: rowKey,
+      assigned_unit_id: unitId || '',
+      check_in: date,
+      check_out: checkOut,
+      total_price: dayPrice > 0 ? String(dayPrice) : '',
     });
+    setQuickOpen(true);
   };
+
+  useEffect(() => {
+    if (!quickOpen || !resForm.room_id || !resForm.check_in || !resForm.check_out) return;
+    if (resForm.check_out <= resForm.check_in) return;
+    let sum = 0;
+    let cursor = resForm.check_in;
+    while (cursor < resForm.check_out) {
+      const price = Number(cal?.day_state?.[resForm.room_id]?.[cursor]?.price_eur || 0);
+      if (price > 0) sum += price;
+      cursor = addDaysIso(cursor, 1);
+    }
+    setResForm((prev) => {
+      const next = sum > 0 ? String(sum) : prev.total_price;
+      if (next === prev.total_price) return prev;
+      return { ...prev, total_price: next };
+    });
+  }, [quickOpen, resForm.room_id, resForm.check_in, resForm.check_out, cal?.day_state]);
 
   const calendarSelection = {
     roomId: resForm.room_id,
+    rowKey: resForm.row_key,
     checkIn: resForm.check_in,
     checkOut: resForm.check_out,
   };
@@ -358,56 +330,80 @@ export default function CalendarScreen() {
           onPress={() => setSummaryTab('yeni')}
         />
         <StatBox
+          label="ODA EKLENMEMİŞ"
+          value={(stats.unassigned ?? 0) > 0 ? String(stats.unassigned) : 'Yok'}
+          bg={(stats.unassigned ?? 0) > 0 ? '#fd7e14' : COLORS.textSecondary}
+          onPress={() => setSummaryTab('atanmamis')}
+        />
+        <StatBox
+          label="KRİTİK STOK"
+          value={(stats.critical_stock ?? 0) > 0 ? String(stats.critical_stock) : 'Yok'}
+          bg={(stats.critical_stock ?? 0) > 0 ? COLORS.danger : COLORS.textSecondary}
+          onPress={() => navigateTo('inventory')}
+        />
+        <StatBox
           label="ÇOKLU REZ."
           value={cokluCount > 0 ? String(cokluCount) : 'Yok'}
           bg={cokluCount > 0 ? COLORS.danger : COLORS.success}
-          icon={cokluCount > 0 ? null : '🛡'}
           onPress={() => setSummaryTab('coklu')}
         />
       </View>
 
       <View style={styles.syncBar}>
-        <AppPressable color={COLORS.textSecondary} onPress={goPrev} style={styles.navBtn}>
-          <Ionicons name="chevron-back" size={18} color="#fff" />
-        </AppPressable>
+        <TouchableOpacity
+          style={[styles.navBtn, styles.navBtnFill]}
+          onPress={goPrev}
+          activeOpacity={0.85}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="chevron-back" size={20} color="#fff" />
+        </TouchableOpacity>
 
         <View style={styles.syncCenter}>
           {!cal?.is_today_view ? (
-            <Pressable onPress={goToday} style={styles.todayBadge}>
+            <TouchableOpacity onPress={goToday} style={styles.todayBadge} activeOpacity={0.85}>
               <Text style={styles.todayBadgeText}>Bugüne Dön</Text>
-            </Pressable>
+            </TouchableOpacity>
           ) : null}
-          <Text style={styles.syncLabel}>
-            Son Senkron: <Text style={styles.syncValue}>{cal?.last_sync || '—'}</Text>
-          </Text>
+          {cal?.ical_configured ? (
+            <Text style={styles.syncLabel}>
+              Son Senkron: <Text style={styles.syncValue}>{cal?.last_sync || '—'}</Text>
+            </Text>
+          ) : null}
           <View style={styles.syncActions}>
-            <AppPressable
-              color={COLORS.success}
-              loading={busy === 'sync'}
-              disabled={busy === 'sync'}
-              onPress={onSync}
-              style={styles.syncBtn}
-            >
-              <View style={styles.syncBtnInner}>
-                <Ionicons name="refresh" size={12} color="#fff" />
-                <Text style={styles.syncBtnText}>
-                  {busy === 'sync' ? ' Senkronize...' : ' Senkronize Et'}
-                </Text>
-              </View>
-            </AppPressable>
-            <AppPressable
-              color={COLORS.warning}
-              onPress={() => setBulkModalVisible(true)}
+            {cal?.ical_configured ? (
+              <TouchableOpacity
+                style={[styles.syncBtn, busy === 'sync' && styles.btnDisabled]}
+                onPress={onSync}
+                disabled={busy === 'sync'}
+                activeOpacity={0.85}
+              >
+                <View style={styles.syncBtnInner}>
+                  <Ionicons name="refresh" size={13} color="#fff" />
+                  <Text style={styles.syncBtnText}>
+                    {busy === 'sync' ? ' Senkronize...' : ' iCal senkronize et'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
               style={styles.bulkBtn}
+              onPress={() => setBulkModalVisible(true)}
+              activeOpacity={0.85}
             >
               <Text style={styles.bulkBtnText}>📦 Toplu Güncelle</Text>
-            </AppPressable>
+            </TouchableOpacity>
           </View>
         </View>
 
-        <AppPressable color={COLORS.textSecondary} onPress={goNext} style={styles.navBtn}>
-          <Ionicons name="chevron-forward" size={18} color="#fff" />
-        </AppPressable>
+        <TouchableOpacity
+          style={[styles.navBtn, styles.navBtnFill]}
+          onPress={goNext}
+          activeOpacity={0.85}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="chevron-forward" size={20} color="#fff" />
+        </TouchableOpacity>
       </View>
 
       <CalendarLegend />
@@ -424,198 +420,96 @@ export default function CalendarScreen() {
         selection={calendarSelection}
       />
 
-      <FormCard title="Rezervasyon ekle" icon="👤" borderColor={COLORS.primary}>
-        {(resForm.room_id && resForm.check_in) ? (
-          <View style={styles.selectedSummary}>
-            <Text style={styles.selectedSummaryText}>
-              {roomOptions.find((r) => String(r.value) === String(resForm.room_id))?.label || 'Oda'}{' '}
-              · {resForm.check_in ? formatDate(resForm.check_in) : '—'}
-              {resForm.check_out ? ` → ${formatDate(resForm.check_out)}` : ' → çıkış seçin'}
-              {resForm.check_in && resForm.check_out
-                ? ` (${nightsBetweenIso(resForm.check_in, resForm.check_out)} gece)`
-                : ''}
-            </Text>
-          </View>
-        ) : null}
-        <SelectField
-          placeholder="Oda Seçin..."
-          value={resForm.room_id}
-          options={roomOptions}
-          onChange={(v) => setResForm((p) => ({ ...p, room_id: v }))}
-        />
-        <View style={styles.row2}>
-          <View style={styles.half}>
-            <FormLabel>Giriş</FormLabel>
-            <DateInput
-              value={resForm.check_in}
-              onChangeValue={(v) => setResForm((p) => ({ ...p, check_in: v }))}
-            />
-          </View>
-          <View style={styles.half}>
-            <FormLabel>Çıkış</FormLabel>
-            <DateInput
-              value={resForm.check_out}
-              onChangeValue={(v) => setResForm((p) => ({ ...p, check_out: v }))}
-            />
-          </View>
-        </View>
-        <View style={styles.row2}>
-          <View style={[styles.half, { flex: 1.4 }]}>
-            <FormInput
-              placeholder="Misafir Adı"
-              value={resForm.guest_name}
-              onChangeText={(v) => setResForm((p) => ({ ...p, guest_name: v }))}
-            />
-          </View>
-          <View style={styles.half}>
-            <FormInput
-              placeholder="Tutar (€)"
-              keyboardType="decimal-pad"
-              value={resForm.total_price}
-              onChangeText={(v) => setResForm((p) => ({ ...p, total_price: v }))}
-            />
-          </View>
-        </View>
-        <SubmitButton
-          title="Kaydet"
-          color={COLORS.primary}
-          loading={busy === 'res'}
-          onPress={onSaveReservation}
-        />
-      </FormCard>
-
-      <FormCard title="Fiyat & Müsaitlik" icon="🏷" borderColor={COLORS.success}>
-        <SelectField
-          placeholder="Oda Seçin..."
-          value={availForm.room_id}
-          options={roomOptions}
-          onChange={(v) => setAvailForm((p) => ({ ...p, room_id: v }))}
-        />
-        <View style={styles.row2}>
-          <View style={styles.half}>
-            <FormLabel>Başlangıç</FormLabel>
-            <DateInput
-              value={availForm.start_date}
-              onChangeValue={(v) => setAvailForm((p) => ({ ...p, start_date: v }))}
-            />
-          </View>
-          <View style={styles.half}>
-            <FormLabel>Bitiş</FormLabel>
-            <DateInput
-              value={availForm.end_date}
-              onChangeValue={(v) => setAvailForm((p) => ({ ...p, end_date: v }))}
-            />
-          </View>
-        </View>
-        <View style={styles.row2}>
-          <View style={styles.half}>
-            <FormInput
-              placeholder="Fiyat (€)"
-              keyboardType="decimal-pad"
-              value={availForm.price_eur}
-              onChangeText={(v) => setAvailForm((p) => ({ ...p, price_eur: v }))}
-            />
-          </View>
-          <View style={styles.half}>
-            <SelectField
-              placeholder="Açık"
-              value={availForm.status}
-              options={statusOptions}
-              onChange={(v) => setAvailForm((p) => ({ ...p, status: v }))}
-            />
-          </View>
-        </View>
-        <SubmitButton
-          title="Takvime İşle"
-          color={COLORS.success}
-          loading={busy === 'avail'}
-          onPress={onSaveAvailability}
-        />
-      </FormCard>
-
-      <FormCard title="Blokaj ekle" icon="🚫" borderColor={COLORS.textSecondary}>
-        <SelectField
-          placeholder="Oda Seçin..."
-          value={blockForm.room_id}
-          options={roomOptions}
-          onChange={(v) => setBlockForm((p) => ({ ...p, room_id: v }))}
-        />
-        <View style={styles.row2}>
-          <View style={styles.half}>
-            <FormLabel>Kapanış</FormLabel>
-            <DateInput
-              value={blockForm.check_in}
-              onChangeValue={(v) => setBlockForm((p) => ({ ...p, check_in: v }))}
-            />
-          </View>
-          <View style={styles.half}>
-            <FormLabel>Açılış</FormLabel>
-            <DateInput
-              value={blockForm.check_out}
-              onChangeValue={(v) => setBlockForm((p) => ({ ...p, check_out: v }))}
-            />
-          </View>
-        </View>
-        <FormInput
-          placeholder="Açıklama (Örn: Tadilat)"
-          value={blockForm.summary}
-          onChangeText={(v) => setBlockForm((p) => ({ ...p, summary: v }))}
-        />
-        <SubmitButton
-          title="Odayı Kapat"
-          color={COLORS.textSecondary}
-          loading={busy === 'block'}
-          onPress={onSaveBlock}
-        />
-      </FormCard>
-
-      <AppPressable
-        color={COLORS.danger}
-        onPress={() => navigateTo('inventory')}
-        style={styles.criticalCard}
-      >
-        <Text style={[styles.criticalTitle, { color: '#fff' }]}>📦 Kritik Stoklar</Text>
-        <Text style={[styles.criticalText, { color: '#fff' }]}>
-          {(stats.critical_stock ?? 0) > 0
-            ? `${stats.critical_stock} adet kritik stok var!`
-            : 'Kritik stok yok'}
-        </Text>
-      </AppPressable>
-
-      <View style={styles.blocksCard}>
-        <Text style={styles.blocksTitle}>📋 Manuel Blokajlar</Text>
-        {(cal?.manual_blocks || []).length === 0 ? (
-          <Text style={styles.blocksEmpty}>Aktif blokaj bulunmuyor.</Text>
-        ) : (
-          cal.manual_blocks.map((block) => (
-            <View key={String(block.block_id)} style={styles.blockRow}>
-              <View>
-                <Text style={styles.blockRoom}>{block.room_name}</Text>
-                <Text style={styles.blockDates}>
-                  {block.check_in?.slice(5).replace('-', '.')} -{' '}
-                  {block.check_out?.slice(5).replace('-', '.')}
-                </Text>
-              </View>
-              <DeleteButton
-                label="Sil"
-                onConfirm={() => onDeleteBlock(block.block_id)}
-                style={styles.blockDelete}
-              />
-            </View>
-          ))
-        )}
-      </View>
-
     </PageScaffold>
 
+    {isFocused ? (
+      <>
     <BulkUpdateModal
       visible={bulkModalVisible}
       onClose={() => setBulkModalVisible(false)}
-      rooms={rooms}
+      rooms={bulkRooms}
       startDateHint={cal?.start_date}
       loading={busy === 'bulk'}
       onSubmit={onSaveBulk}
     />
+
+    <Modal
+      visible={quickOpen}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setQuickOpen(false)}
+    >
+      <KeyboardAvoidingView
+        style={styles.quickWrap}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.quickBackdrop} onPress={() => setQuickOpen(false)} />
+        <View style={[styles.quickSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={styles.quickHeader}>
+            <Text style={styles.quickTitle}>Hızlı rezervasyon</Text>
+            <Pressable onPress={() => setQuickOpen(false)} hitSlop={8}>
+              <Ionicons name="close" size={22} color="#fff" />
+            </Pressable>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <SelectField
+              placeholder="Oda Seçin..."
+              value={resForm.row_key || resForm.room_id}
+              options={roomOptions}
+              onChange={(v) => {
+                const opt = roomOptions.find((r) => String(r.value) === String(v));
+                const room = opt?.room;
+                setResForm((p) => ({
+                  ...p,
+                  row_key: v,
+                  room_id: room?.room_id ?? v,
+                  assigned_unit_id: room?.unit_id || '',
+                }));
+              }}
+            />
+            <View style={styles.row2}>
+              <View style={styles.half}>
+                <FormLabel>Giriş</FormLabel>
+                <DateInput
+                  value={resForm.check_in}
+                  onChangeValue={(v) => setResForm((p) => ({ ...p, check_in: v }))}
+                />
+              </View>
+              <View style={styles.half}>
+                <FormLabel>Çıkış</FormLabel>
+                <DateInput
+                  value={resForm.check_out}
+                  onChangeValue={(v) => setResForm((p) => ({ ...p, check_out: v }))}
+                />
+              </View>
+            </View>
+            <FormInput
+              placeholder="Misafir adı"
+              value={resForm.guest_name}
+              onChangeText={(v) => setResForm((p) => ({ ...p, guest_name: v }))}
+            />
+            <FormInput
+              placeholder="Tutar"
+              keyboardType="decimal-pad"
+              value={resForm.total_price}
+              onChangeText={(v) => setResForm((p) => ({ ...p, total_price: v }))}
+            />
+            {resForm.check_in && resForm.check_out ? (
+              <Text style={styles.quickNights}>
+                {formatDate(resForm.check_in)} → {formatDate(resForm.check_out)}
+                {` · ${nightsBetweenIso(resForm.check_in, resForm.check_out)} gece`}
+              </Text>
+            ) : null}
+            <SubmitButton
+              title="Kaydet"
+              color={COLORS.primary}
+              loading={busy === 'res'}
+              onPress={onSaveReservation}
+            />
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
 
     <Modal
       visible={!!summaryTab}
@@ -637,6 +531,8 @@ export default function CalendarScreen() {
         ) : null}
       </View>
     </Modal>
+      </>
+    ) : null}
     </View>
   );
 }
@@ -644,20 +540,27 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   screenRoot: { flex: 1 },
   summaryModal: { flex: 1, backgroundColor: COLORS.background },
-  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  statsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
   statBox: {
-    flex: 1,
+    width: '32%',
+    minHeight: 62,
+    marginBottom: 8,
     borderRadius: 8,
     paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
     alignItems: 'center',
+    justifyContent: 'center',
     elevation: 2,
   },
   statLabel: { fontSize: 8, fontWeight: '700', color: 'rgba(255,255,255,0.85)', textAlign: 'center' },
   statLabelDark: { color: 'rgba(0,0,0,0.65)' },
-  statValue: { fontSize: 18, fontWeight: '800', color: '#fff', marginTop: 2 },
-  statValueDark: { color: '#212529', fontSize: 16 },
-  statIcon: { fontSize: 16, color: '#fff', marginTop: 2 },
+  statValue: { fontSize: 16, fontWeight: '800', color: '#fff', marginTop: 2, lineHeight: 20 },
+  statValueDark: { color: '#212529' },
   syncBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -674,6 +577,12 @@ const styles = StyleSheet.create({
     minHeight: 44,
     borderRadius: 6,
     padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.textSecondary,
+  },
+  navBtnFill: {
+    backgroundColor: COLORS.textSecondary,
   },
   syncCenter: { flex: 1, alignItems: 'center' },
   todayBadge: {
@@ -694,68 +603,51 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   syncBtn: {
-    minHeight: 28,
-    minWidth: 0,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    minHeight: 32,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     borderRadius: 6,
+    backgroundColor: COLORS.success,
   },
   bulkBtn: {
-    minHeight: 28,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    minHeight: 36,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     borderRadius: 6,
+    backgroundColor: COLORS.warning,
   },
-  bulkBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  bulkBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  btnDisabled: { opacity: 0.6 },
   syncBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
   syncBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  selectedSummary: {
-    backgroundColor: '#eef4ff',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#cfe2ff',
-  },
-  selectedSummaryText: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
   row2: { flexDirection: 'row', gap: 8 },
   half: { flex: 1 },
-  criticalCard: {
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 12,
-    alignItems: 'center',
+  quickWrap: { flex: 1, justifyContent: 'flex-end' },
+  quickBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.58)' },
+  quickSheet: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 0,
+    maxHeight: '88%',
   },
-  criticalTitle: { fontWeight: '700', fontSize: 13 },
-  criticalText: { fontSize: 14, marginTop: 6, fontWeight: '600' },
-  blocksCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  blocksTitle: { fontWeight: '700', fontSize: 14, marginBottom: 10, color: COLORS.textPrimary },
-  blocksEmpty: { color: COLORS.textMuted, fontSize: 13 },
-  blockRow: {
+  quickHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.primary,
+    marginHorizontal: -16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    marginBottom: 12,
   },
-  blockRoom: { fontWeight: '700', fontSize: 13, color: COLORS.textPrimary },
-  blockDates: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  blockDelete: {
-    minHeight: 36,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  blockDeleteText: { fontSize: 11, fontWeight: '600' },
+  quickTitle: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  quickNights: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10, fontWeight: '600' },
 });

@@ -6,8 +6,8 @@ import { showConfirm } from '../utils/alert';
 
 export default function AppHeader({ admin, onLogout, branding }) {
   const displayName =
-    String(admin?.admin_adsoyad || '').trim() ||
     String(admin?.admin_kadi || '').trim() ||
+    String(admin?.admin_adsoyad || '').trim() ||
     'Admin';
   const logoUrl = String(branding?.logo_url || '').trim();
 

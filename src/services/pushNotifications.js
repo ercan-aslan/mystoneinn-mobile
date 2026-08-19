@@ -5,6 +5,7 @@ import { isRunningInExpoGo } from 'expo';
 import * as Device from 'expo-device';
 import { PushAPI } from '../api';
 import { notifyCalendarRefresh } from '../utils/calendarRefresh';
+import { formatDate, getChannelStyle } from '../utils/format';
 import {
   initializeReservationTracking,
   startReservationWatcher,
@@ -348,9 +349,10 @@ export async function getInitialNotificationReservationId() {
 function formatReservationBody(item) {
   const guest = item.guest_name || 'Misafir';
   const room = item.room_name || 'Oda';
-  const checkIn = item.check_in || '';
-  const checkOut = item.check_out || '';
-  return `${guest} · ${room}\n${checkIn} → ${checkOut}`;
+  const checkIn = formatDate(item.check_in);
+  const checkOut = formatDate(item.check_out);
+  const source = getChannelStyle(item.channel, item).label;
+  return `${guest} · ${room}\n${checkIn} → ${checkOut}\n${source}`;
 }
 
 async function getLocallyNotifiedIds() {

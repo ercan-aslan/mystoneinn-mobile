@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../theme';
 
 export default function PageScaffold({
@@ -21,6 +22,9 @@ export default function PageScaffold({
   children,
   headerExtra,
 }) {
+  const insets = useSafeAreaInsets();
+  const bottomPad = 20 + Math.min(insets.bottom || 0, 12);
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -29,7 +33,7 @@ export default function PageScaffold({
     >
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
@@ -63,7 +67,7 @@ export default function PageScaffold({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 16, paddingBottom: 32, flexGrow: 1 },
+  content: { padding: 16 },
   title: { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary },
   subtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4, marginBottom: 12 },
   errorBox: {

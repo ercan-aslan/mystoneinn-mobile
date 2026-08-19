@@ -13,7 +13,7 @@ export default function ChannelFilterBar({ hiddenCount = 0 }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.textWrap}>
-        <Text style={styles.title}>Kanal / iCal rezervasyonları</Text>
+        <Text style={styles.title}>Kanal Rezervasyonları</Text>
         {!showChannelReservations && hiddenCount > 0 ? (
           <Text style={styles.hint}>{hiddenCount} kayıt gizli — web sitesi görünümü</Text>
         ) : !showChannelReservations ? (

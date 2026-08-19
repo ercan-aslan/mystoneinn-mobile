@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Platform,
   StatusBar,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppHeader from './src/components/AppHeader';
 import SafeScreen from './src/components/SafeScreen';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
@@ -19,6 +21,7 @@ import ChannelFilterBar from './src/components/ChannelFilterBar';
 import { bindDialogApi } from './src/utils/alert';
 import {
   AuthAPI,
+  CasesAPI,
   STORAGE_ADMIN_KEY,
   STORAGE_API_BUILD_KEY,
   STORAGE_TOKEN_KEY,
@@ -28,7 +31,7 @@ import {
   saveSiteBranding,
 } from './src/api';
 import { storageGetItem } from './src/utils/secureStorage';
-import { getAllowedMenuItems, getDefaultScreen, canAccess, MOBILE_MENU_ITEMS } from './src/menuConfig';
+import { getAllowedMenuItems, getDefaultScreen, canAccess, canAccessMenuItem, MOBILE_MENU_ITEMS } from './src/menuConfig';
 import { applyWebAppFix } from './src/utils/applyWebAppFix';
 import { showMessage } from './src/utils/alert';
 import { COLORS } from './src/theme';
@@ -40,6 +43,8 @@ import RoomsScreen from './src/screens/RoomsScreen';
 import PaymentsScreen from './src/screens/PaymentsScreen';
 import MarketScreen from './src/screens/MarketScreen';
 import CouponsScreen from './src/screens/CouponsScreen';
+import CasesScreen from './src/screens/CasesScreen';
+import CaseDetailScreen from './src/screens/CaseDetailScreen';
 import CancellationsScreen from './src/screens/CancellationsScreen';
 import ChannelsScreen from './src/screens/ChannelsScreen';
 import ReportsScreen from './src/screens/ReportsScreen';
@@ -87,6 +92,7 @@ const SCREEN_MAP = {
   reports: ReportsScreen,
   gallery: GalleryScreen,
   coupons: CouponsScreen,
+  cases: CasesScreen,
   explore: ExploreScreen,
   channels: ChannelsScreen,
   settings: SettingsScreen,
@@ -127,13 +133,7 @@ function PushManager({ onOpenReservation }) {
           onOpenRef.current?.(pendingId);
         }
 
-        stopPolling = startReservationPolling((item) => {
-          const status = String(item?.status || '').toLowerCase().trim();
-          if (['cancelled', 'canceled', 'blocked', 'iptal', 'iptal edildi'].includes(status)) {
-            return;
-          }
-          onOpenRef.current?.(Number(item.reservation_id || item.id));
-        });
+        stopPolling = startReservationPolling({ enableLocalAlerts: true });
       } catch (error) {
         console.warn('PushManager setup failed', error);
       }
@@ -164,13 +164,27 @@ function PushManager({ onOpenReservation }) {
 function canNavigateToScreen(admin, screen) {
   const item = MOBILE_MENU_ITEMS.find((entry) => entry.screen === screen);
   if (!item) return false;
-  return canAccess(admin, item.perm);
+  return canAccessMenuItem(admin, item);
 }
 
 function MainShell({ admin, onLogout, branding }) {
   const menuItems = useMemo(() => getAllowedMenuItems(admin), [admin]);
   const [activeScreen, setActiveScreen] = useState(() => getDefaultScreen(admin));
   const [reservationDetail, setReservationDetail] = useState(null);
+  const [caseDetail, setCaseDetail] = useState(null);
+  const [caseBadge, setCaseBadge] = useState(0);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvt, () => setKeyboardOpen(true));
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardOpen(false));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const navigation = useMemo(
     () => ({
@@ -179,12 +193,19 @@ function MainShell({ admin, onLogout, branding }) {
         if (!numId) return;
         setReservationDetail({ id: numId, snapshot });
       },
+      openCase: (id) => {
+        const numId = Number(id);
+        if (!numId) return;
+        setReservationDetail(null);
+        setCaseDetail({ id: numId });
+      },
       navigateTo: (screen) => {
         if (!canNavigateToScreen(admin, screen)) {
           showMessage('Yetki yok', 'Bu sayfaya erişim yetkiniz bulunmuyor.');
           return;
         }
         setReservationDetail(null);
+        setCaseDetail(null);
         setActiveScreen(screen);
       },
     }),
@@ -197,11 +218,36 @@ function MainShell({ admin, onLogout, branding }) {
     }
   }, [menuItems, admin, activeScreen]);
 
+  useEffect(() => {
+    let cancelled = false;
+    CasesAPI.list('open', false)
+      .then((res) => {
+        if (cancelled) return;
+        const overdue = Number(res?.overdue_count || 0);
+        const open = Number(res?.open_count || 0);
+        setCaseBadge(overdue > 0 ? overdue : open);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [admin, caseDetail, activeScreen]);
+
+  const navItems = useMemo(
+    () =>
+      menuItems.map((item) =>
+        item.screen === 'cases' && caseBadge > 0 ? { ...item, badge: caseBadge } : item
+      ),
+    [menuItems, caseBadge]
+  );
+
   const ScreenComponent = SCREEN_MAP[activeScreen] || CalendarScreen;
   const isCalendar = activeScreen === 'calendar';
+  const overlayOpen = Boolean(reservationDetail || caseDetail);
   const showReservationFilter =
-    activeScreen === 'reservations' || activeScreen === 'cancellations' || activeScreen === 'payments';
-  const OtherScreen = !isCalendar ? ScreenComponent : null;
+    !overlayOpen &&
+    (activeScreen === 'reservations' || activeScreen === 'cancellations' || activeScreen === 'payments');
+  const OtherScreen = !isCalendar && !overlayOpen ? ScreenComponent : null;
 
   if (menuItems.length === 0) {
     return (
@@ -222,32 +268,41 @@ function MainShell({ admin, onLogout, branding }) {
         <AppHeader admin={admin} onLogout={onLogout} branding={branding} />
         {showReservationFilter ? <ChannelFilterBar /> : null}
         <View style={styles.body}>
-          <View style={isCalendar ? styles.flex1 : styles.calendarKeeper}>
-            <CalendarScreen />
+          <View
+            style={isCalendar && !overlayOpen ? styles.flex1 : styles.calendarKeeper}
+            pointerEvents={isCalendar && !overlayOpen ? 'auto' : 'none'}
+          >
+            <CalendarScreen isFocused={isCalendar && !overlayOpen} />
           </View>
-          {OtherScreen ? (
+          {reservationDetail ? (
+            <View style={styles.flex1}>
+              <ReservationDetailScreen
+                reservationId={reservationDetail.id}
+                initialSnapshot={reservationDetail.snapshot}
+                onClose={() => setReservationDetail(null)}
+              />
+            </View>
+          ) : caseDetail ? (
+            <View style={styles.flex1}>
+              <CaseDetailScreen caseId={caseDetail.id} onClose={() => setCaseDetail(null)} />
+            </View>
+          ) : OtherScreen ? (
             <View style={styles.flex1}>
               <OtherScreen />
             </View>
           ) : null}
         </View>
-        {!reservationDetail ? (
-          <BottomNav
-            items={menuItems}
-            activeScreen={activeScreen}
-            onNavigate={setActiveScreen}
-            centered={menuItems.length <= 6}
-          />
-        ) : null}
-        {reservationDetail ? (
-          <View style={styles.overlay}>
-            <ReservationDetailScreen
-              reservationId={reservationDetail.id}
-              initialSnapshot={reservationDetail.snapshot}
-              onClose={() => setReservationDetail(null)}
-            />
-          </View>
-        ) : null}
+        {keyboardOpen ? null : (
+        <BottomNav
+          items={navItems}
+          activeScreen={activeScreen}
+          onNavigate={(screen) => {
+            setReservationDetail(null);
+            setCaseDetail(null);
+            setActiveScreen(screen);
+          }}
+        />
+        )}
       </SafeScreen>
     </NavigationContext.Provider>
   );
@@ -335,41 +390,45 @@ export default function App() {
 
   if (bootstrapping) {
     return (
-      <ConfirmProvider>
-        <DialogBinder />
-        <View style={styles.bootstrap}>
-          <ExpoStatusBar style="dark" />
-          <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
-          <ActivityIndicator size="large" color={COLORS.primary} />
-        </View>
-      </ConfirmProvider>
+      <SafeAreaProvider>
+        <ConfirmProvider>
+          <DialogBinder />
+          <View style={styles.bootstrap}>
+            <ExpoStatusBar style="dark" />
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+            <ActivityIndicator size="large" color={COLORS.primary} />
+          </View>
+        </ConfirmProvider>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <AppErrorBoundary>
-      <ConfirmProvider>
-        <DialogBinder />
-        <ReservationFilterProvider>
-          <View style={styles.root}>
-            <ExpoStatusBar style="dark" />
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
-            {admin ? (
-              <MainShell admin={admin} onLogout={handleLogout} branding={branding} />
-            ) : (
-              <LoginScreen onLoginSuccess={handleLoginSuccess} />
-            )}
-          </View>
-        </ReservationFilterProvider>
-      </ConfirmProvider>
-    </AppErrorBoundary>
+    <SafeAreaProvider>
+      <AppErrorBoundary onReset={handleLogout}>
+        <ConfirmProvider>
+          <DialogBinder />
+          <ReservationFilterProvider>
+            <View style={styles.root}>
+              <ExpoStatusBar style="dark" />
+              <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
+              {admin ? (
+                <MainShell admin={admin} onLogout={handleLogout} branding={branding} />
+              ) : (
+                <LoginScreen onLoginSuccess={handleLoginSuccess} />
+              )}
+            </View>
+          </ReservationFilterProvider>
+        </ConfirmProvider>
+      </AppErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.background },
   safe: { flex: 1, backgroundColor: COLORS.background },
-  body: { flex: 1 },
+  body: { flex: 1, overflow: 'hidden' },
   flex1: { flex: 1 },
   calendarKeeper: {
     position: 'absolute',
@@ -377,12 +436,7 @@ const styles = StyleSheet.create({
     width: 0,
     height: 0,
     overflow: 'hidden',
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 100,
-    backgroundColor: COLORS.background,
-    flexDirection: 'column',
+    pointerEvents: 'none',
   },
   bootstrap: {
     flex: 1,
