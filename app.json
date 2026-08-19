@@ -68,7 +68,11 @@
       }
     },
     "extra": {
-      "siteUrl": "https://mystoneinn.com"
-    }
+      "siteUrl": "https://mystoneinn.com",
+      "eas": {
+        "projectId": "4fe1d234-88a8-44f8-b87f-e67c0962e8e3"
+      }
+    },
+    "owner": "ercanaslan3"
   }
 }
