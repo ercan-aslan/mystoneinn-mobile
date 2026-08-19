@@ -226,7 +226,7 @@ export default function LoginScreen({ onLoginSuccess }) {
               <Text style={styles.inputIcon}>👤</Text>
               <TextInput
                 style={styles.input}
-                placeholder="ercanaslan veya e-posta"
+                placeholder=""
                 placeholderTextColor={COLORS.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -247,7 +247,7 @@ export default function LoginScreen({ onLoginSuccess }) {
               <Text style={styles.inputIcon}>🔑</Text>
               <TextInput
                 style={styles.input}
-                placeholder="••••••••"
+                placeholder=""
                 placeholderTextColor={COLORS.textMuted}
                 secureTextEntry
                 value={password}
