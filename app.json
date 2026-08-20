@@ -2,7 +2,7 @@
   "expo": {
     "name": "MyStoneINN",
     "slug": "mystoneinn-mobile",
-    "version": "1.0.21",
+    "version": "1.0.22",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mystoneinn.admin",
-      "buildNumber": "15",
+      "buildNumber": "16",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -26,7 +26,7 @@
     },
     "android": {
       "package": "com.mystoneinn.admin",
-      "versionCode": 15,
+      "versionCode": 16,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
