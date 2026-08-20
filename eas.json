@@ -8,8 +8,7 @@
       "distribution": "internal",
       "node": "22.14.0",
       "android": {
-        "buildType": "apk",
-        "credentialsSource": "remote"
+        "buildType": "apk"
       }
     },
     "production": {
