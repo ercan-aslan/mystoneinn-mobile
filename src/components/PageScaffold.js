@@ -12,6 +12,20 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../theme';
 
+/** Bounce only at real content edges; no empty-page rubber-band / leftover overscroll. */
+export const SCREEN_SCROLL_PROPS = Platform.select({
+  ios: {
+    bounces: true,
+    alwaysBounceVertical: false,
+    alwaysBounceHorizontal: false,
+    contentInsetAdjustmentBehavior: 'never',
+  },
+  android: {
+    overScrollMode: 'auto',
+  },
+  default: {},
+});
+
 export default function PageScaffold({
   title,
   subtitle,
@@ -28,8 +42,7 @@ export default function PageScaffold({
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      behavior={undefined}
     >
       <ScrollView
         style={styles.container}
@@ -37,6 +50,7 @@ export default function PageScaffold({
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        {...SCREEN_SCROLL_PROPS}
         refreshControl={
           onRefresh ? (
             <RefreshControl

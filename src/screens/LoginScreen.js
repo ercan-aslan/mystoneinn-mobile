@@ -22,6 +22,7 @@ import {
 } from '../services/biometricAuth';
 import Constants from 'expo-constants';
 import { COLORS, BRAND_NAME } from '../theme';
+import { SCREEN_SCROLL_PROPS } from '../components/PageScaffold';
 
 export default function LoginScreen({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -181,6 +182,7 @@ export default function LoginScreen({ onLoginSuccess }) {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          {...SCREEN_SCROLL_PROPS}
         >
           <View style={styles.loginCard}>
             <View style={styles.cardTopBorder} />
