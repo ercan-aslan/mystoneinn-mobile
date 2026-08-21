@@ -481,6 +481,12 @@ export function startReservationPolling({ enableLocalAlerts = false } = {}) {
         fresh.push(item);
       }
 
+      // Gece iCal / baseline sıfırlanması gibi toplu sel: bildirim yağdırma, sadece işaretle
+      if (fresh.length > 5) {
+        await markLocallyNotified(fresh.map((item) => Number(item.reservation_id || item.id)));
+        return;
+      }
+
       for (const item of fresh) {
         await showLocalReservationAlert(item);
       }
